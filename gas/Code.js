@@ -180,20 +180,15 @@ function readEligibility_() {
   });
 }
 
-function countBooked_(regs, slotId, exceptEmail) {
-  var n = 0;
-  for (var i = 0; i < regs.length; i++) {
-    if (exceptEmail && regs[i].email === exceptEmail) continue;
-    if (regs[i].speakingSlotId === slotId || regs[i].skillsSlotId === slotId) n++;
-  }
-  return n;
-}
+// countBooked_ + evaluateBooking_ định nghĩa ở booking-core.js (cùng project GAS khi push).
 
 function buildState_(email, slots, regs, cfg) {
   var mine = null;
   for (var i = 0; i < regs.length; i++) {
     if (regs[i].email === email) { mine = regs[i]; break; }
   }
+  // Dòng đã hủy (cả 2 ca trống) = không còn booking active, dù change_count vẫn được giữ.
+  if (mine && !mine.speakingSlotId && !mine.skillsSlotId) mine = null;
   var now = new Date();
   return {
     email: email,
@@ -298,8 +293,10 @@ function book(payload) {
   var bu = String(payload.bu || '').trim();
   if (!empCode || !fullName || !bu)
     return { ok: false, error: 'Vui lòng điền đầy đủ Mã NV, Họ và tên, BU.' };
-  if (empCode.length > 20 || fullName.length > 100 || bu.length > 50)
-    return { ok: false, error: 'Dữ liệu nhập quá dài. Mã NV tối đa 20 ký tự, Họ tên tối đa 100, BU tối đa 50.' };
+  if (!/^\d{6}$/.test(empCode))
+    return { ok: false, error: 'Mã NV phải có đúng 6 chữ số.' };
+  if (fullName.length > 100 || bu.length > 50)
+    return { ok: false, error: 'Dữ liệu nhập quá dài. Họ tên tối đa 100 ký tự, BU tối đa 50.' };
 
   // ── allowEnrollment check (before lock) ──
   try {
@@ -342,27 +339,20 @@ function book(payload) {
 
     var slots = readSlots_();
     var regs = readRegs_();
-    var byId = {};
-    for (var si = 0; si < slots.length; si++) byId[slots[si].slotId] = slots[si];
 
-    var sp = byId[String(payload.speakingSlotId || '')];
-    var sk = byId[String(payload.skillsSlotId || '')];
-    if (!sp || sp.type !== 'Speaking')
-      return { ok: false, error: 'Ca Speaking không hợp lệ.' };
-    if (!sk || sk.type !== '3 Skills')
-      return { ok: false, error: 'Ca 3 Skills không hợp lệ.' };
-
-    // Cổng 1: còn chỗ (loại trừ booking cũ của chính HV).
-    if (countBooked_(regs, sp.slotId, email) >= sp.capacity)
-      return { ok: false, error: 'Ca Speaking "' + sp.display + '" đã hết chỗ.', state: buildState_(email, slots, regs, cfg) };
-    if (countBooked_(regs, sk.slotId, email) >= sk.capacity)
-      return { ok: false, error: 'Ca 3 Skills "' + sk.display + '" đã hết chỗ.', state: buildState_(email, slots, regs, cfg) };
-
-    // Cổng 2: tự thỏa (1 SP + 1 SK do 2 trường riêng biệt).
-
-    // Cổng 3: không overlap nếu cùng ngày.
-    if (sp.date === sk.date && sp.startMin < sk.endMin && sp.endMin > sk.startMin)
-      return { ok: false, error: 'Hai ca thi bị trùng giờ. Vui lòng chọn 2 ca không trùng.' };
+    // Toàn bộ cổng: mã NV duy nhất, slot hợp lệ + đúng type, còn chỗ, không trùng giờ.
+    // Chạy trong lock nên capacity / emp_code không bị race.
+    var ev = evaluateBooking_(slots, regs, payload, email);
+    if (!ev.ok) {
+      if (ev.code === 'EMP_CODE_TAKEN')
+        audit_('book.rejected.emp_code_taken', email, { empCode: empCode, takenBy: ev.takenBy });
+      // SLOT_FULL trả kèm state mới để FE refetch và hiển thị "Hết".
+      if (ev.code === 'SLOT_FULL')
+        return { ok: false, error: ev.error, state: buildState_(email, slots, regs, cfg) };
+      return { ok: false, error: ev.error };
+    }
+    var sp = ev.sp;
+    var sk = ev.sk;
 
     // Detect Registrations sheet format
     var sh = getSheet_(SHEETS.REGS);
@@ -458,6 +448,9 @@ function cancel() {
 
     var sh = getSheet_(SHEETS.REGS);
     var all = sh.getDataRange().getValues();
+    var headers = all[0] || [];
+    var hasCreatedAt = String(headers[6] || '').toLowerCase().trim() === 'created_at';
+    var hasChangeCount = String(headers[8] || '').toLowerCase().trim() === 'change_count';
     var rowIdx = -1;
     var oldRow = null;
     for (var i = 1; i < all.length; i++) {
@@ -467,17 +460,31 @@ function cancel() {
         break;
       }
     }
-    if (rowIdx === -1) return { ok: false, error: 'Bạn chưa có đăng ký nào để hủy.' };
-    sh.deleteRow(rowIdx);
+    if (rowIdx === -1 || !oldRow[4] && !oldRow[5])
+      return { ok: false, error: 'Bạn chưa có đăng ký nào để hủy.' };
+
+    // Hủy = xóa 2 ca đã chọn nhưng GIỮ LẠI dòng + change_count, để đăng ký lại
+    // KHÔNG reset quota đổi ca (chống lạm dụng cancel→rebook để có thêm lượt đổi).
+    var now = new Date();
+    var clearedRow;
+    if (hasCreatedAt && hasChangeCount) {
+      clearedRow = [oldRow[0], oldRow[1], oldRow[2], oldRow[3], '', '', oldRow[6] || now, now, Number(oldRow[8] || 0)];
+    } else if (hasCreatedAt) {
+      clearedRow = [oldRow[0], oldRow[1], oldRow[2], oldRow[3], '', '', oldRow[6] || now, now];
+    } else {
+      clearedRow = [oldRow[0], oldRow[1], oldRow[2], oldRow[3], '', '', now];
+    }
+    sh.getRange(rowIdx, 1, 1, clearedRow.length).setValues([clearedRow]);
     SpreadsheetApp.flush();
 
-    audit_('cancel', email, oldRow ? {
+    audit_('cancel', email, {
       empCode: String(oldRow[1] || ''),
       fullName: String(oldRow[2] || ''),
       bu: String(oldRow[3] || ''),
       sp: String(oldRow[4] || ''),
       sk: String(oldRow[5] || ''),
-    } : null);
+      changeCount: hasChangeCount ? Number(oldRow[8] || 0) : null,
+    });
 
     return { ok: true, state: buildState_(email, readSlots_(), readRegs_(), cfg) };
   } finally {
@@ -516,7 +523,9 @@ function refreshAdminSummary() {
   if (!ss) throw new Error('No active spreadsheet');
 
   var slots = readSlots_();
-  var regs = readRegs_();
+  var allRegs = readRegs_();
+  // Dòng đã hủy (cả 2 ca trống) chỉ giữ để bảo toàn change_count — không tính là đã đăng ký.
+  var regs = allRegs.filter(function (r) { return r.speakingSlotId || r.skillsSlotId; });
   var eligibility = readEligibility_();
 
   // Get or create AdminSummary sheet
@@ -709,8 +718,12 @@ function lint() {
     if (!rg2.empCode) issues.push('Reg ' + rg2.email + ': thiếu emp_code.');
     if (!rg2.fullName) issues.push('Reg ' + rg2.email + ': thiếu full_name.');
     if (!rg2.bu) issues.push('Reg ' + rg2.email + ': thiếu bu.');
-    if (!rg2.speakingSlotId) issues.push('Reg ' + rg2.email + ': thiếu speaking_slot_id.');
-    if (!rg2.skillsSlotId) issues.push('Reg ' + rg2.email + ': thiếu skills_slot_id.');
+    // Dòng đã hủy (cả 2 ca trống) là hợp lệ — bỏ qua check thiếu slot.
+    var cancelled = !rg2.speakingSlotId && !rg2.skillsSlotId;
+    if (!cancelled) {
+      if (!rg2.speakingSlotId) issues.push('Reg ' + rg2.email + ': thiếu speaking_slot_id.');
+      if (!rg2.skillsSlotId) issues.push('Reg ' + rg2.email + ': thiếu skills_slot_id.');
+    }
   }
 
   // 10. change_count sanity
@@ -720,6 +733,19 @@ function lint() {
         issues.push('Reg ' + regs[ri4].email + ': change_count âm (' + regs[ri4].changeCount + ').');
       if (regs[ri4].changeCount > cfg.maxChanges + 5)
         issues.push('Reg ' + regs[ri4].email + ': change_count bất thường (' + regs[ri4].changeCount + ') so với max_changes (' + cfg.maxChanges + ').');
+    }
+  }
+
+  // 11. empCode đúng định dạng 6 số + duy nhất theo người
+  var empSeen = {};
+  for (var ri5 = 0; ri5 < regs.length; ri5++) {
+    var rg3 = regs[ri5];
+    if (rg3.empCode && !/^\d{6}$/.test(rg3.empCode))
+      issues.push('Reg ' + rg3.email + ': emp_code "' + rg3.empCode + '" không phải 6 chữ số.');
+    if (rg3.empCode) {
+      if (empSeen[rg3.empCode] && empSeen[rg3.empCode] !== rg3.email)
+        issues.push('Mã NV "' + rg3.empCode + '" bị nhiều tài khoản dùng (' + empSeen[rg3.empCode] + ' & ' + rg3.email + ').');
+      empSeen[rg3.empCode] = rg3.email;
     }
   }
 
@@ -741,7 +767,7 @@ function lint() {
  */
 function adminExportSummary() {
   var slots = readSlots_();
-  var regs = readRegs_();
+  var regs = readRegs_().filter(function (r) { return r.speakingSlotId || r.skillsSlotId; });
   var byId = {};
   for (var i = 0; i < slots.length; i++) byId[slots[i].slotId] = slots[i];
 
