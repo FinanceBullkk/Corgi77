@@ -13,7 +13,7 @@ import {
 } from './lib/gas';
 import { fetchAdminEmails, isAdmin } from './lib/admin';
 import { AdminPanel } from './AdminPanel';
-import { onAuth, signInWithGoogle } from './lib/firebase';
+import { onAuth, signInWithGoogle, signOutUser } from './lib/firebase';
 import type { User } from 'firebase/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -199,6 +199,12 @@ function AppInner() {
     }
   }, [pushToast]);
 
+  const handleSignOut = useCallback(async () => {
+    if (!window.confirm('Bạn có chắc muốn đăng xuất?')) return;
+    try { await signOutUser(); } catch { /* ignore */ }
+    window.location.reload();
+  }, []);
+
   if (loadErr) {
     return (
       <div className="app">
@@ -239,6 +245,7 @@ function AppInner() {
       deadlineInfo={deadlineInfo}
       canAdmin={canAdmin}
       onOpenAdmin={openAdmin}
+      onSignOut={handleSignOut}
     />
   );
 
@@ -456,11 +463,13 @@ function Topbar({
   deadlineInfo,
   canAdmin,
   onOpenAdmin,
+  onSignOut,
 }: {
   email: string;
   deadlineInfo: DeadlineInfo | null;
   canAdmin?: boolean;
   onOpenAdmin?: () => void;
+  onSignOut?: () => void;
 }) {
   return (
     <header className="topbar">
@@ -489,6 +498,15 @@ function Topbar({
             <span className="avatar">{emailInitials(email)}</span>
             <span>{emailShortName(email)}</span>
           </div>
+          {onSignOut && (
+            <button className="topbar-signout" onClick={onSignOut} title="Đăng xuất" aria-label="Đăng xuất">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
     </header>

@@ -142,6 +142,8 @@ button { font-family: inherit; cursor: pointer; }
 .avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--brand-500); color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
 .admin-btn { display: inline-flex; align-items: center; gap: var(--s-1); padding: 5px 12px; border-radius: var(--r-pill); font: inherit; font-size: var(--fs-xs); font-weight: 600; line-height: 1; background: var(--brand-50); color: var(--brand-700); border: 1px solid var(--brand-100); cursor: pointer; white-space: nowrap; }
 .admin-btn:hover { background: var(--brand-100); }
+.topbar-signout { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--r-pill); font: inherit; background: transparent; color: var(--ink-500); border: 1px solid var(--ink-150); cursor: pointer; flex-shrink: 0; transition: background 150ms, color 150ms; }
+.topbar-signout:hover { background: var(--danger-50); color: var(--danger-600); border-color: var(--danger-100); }
 
 /* ─── Pills ─────────────────────────────────────────────────────────────── */
 .pill { display: inline-flex; align-items: center; gap: var(--s-1); padding: 4px 10px; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 500; background: var(--ink-100); color: var(--ink-700); border: 1px solid transparent; white-space: nowrap; }
