@@ -614,6 +614,15 @@ function CalendarStep({
   const spSel = slots.find((s) => s.slotId === selection.speakingId) ?? null;
   const skSel = slots.find((s) => s.slotId === selection.skillsId) ?? null;
 
+  // Which type is the user currently picking? Default to whichever is still unfilled.
+  const [activeType, setActiveType] = useState<Slot['type']>(() =>
+    selection.speakingId && !selection.skillsId ? '3 Skills' : 'Speaking',
+  );
+  const tone = activeType === 'Speaking' ? 'sp' : 'sk';
+  // The OTHER type's selection — drawn as a dashed "locked" ghost on the active calendar.
+  const lockedOther = activeType === 'Speaking' ? skSel : spSel;
+
+  // Hour range spans ALL slots so the grid height stays stable when switching tabs.
   const startMins = slots.map((s) => s.startMin);
   const endMins = slots.map((s) => s.endMin);
   const firstHour = startMins.length ? Math.floor(Math.min(...startMins) / 60) : 8;
@@ -622,34 +631,30 @@ function CalendarStep({
 
   const byDate = useMemo(() => {
     const m: Record<string, Slot[]> = {};
-    dates.forEach((d) => { m[d] = slots.filter((s) => s.date === d); });
+    dates.forEach((d) => { m[d] = slots.filter((s) => s.date === d && s.type === activeType); });
     return m;
-  }, [slots, dates]);
+  }, [slots, dates, activeType]);
 
   function onClickSlot(slot: Slot) {
     const st = slotSt(slot, spSel, skSel, curSpId, curSkId);
     if (st === 'full' || st === 'conflict' || deadlinePassed) return;
+    const isPicking =
+      (slot.type === 'Speaking' ? selection.speakingId : selection.skillsId) !== slot.slotId;
     if (slot.type === 'Speaking') {
-      setSelection((sel) => {
-        const newSpId = sel.speakingId === slot.slotId ? null : slot.slotId;
-        // Auto-clear skills if it now conflicts
-        let newSkId = sel.skillsId;
-        if (newSpId && sel.skillsId) {
-          const sp = slots.find((s) => s.slotId === newSpId);
-          const sk = slots.find((s) => s.slotId === sel.skillsId!);
-          if (sp && sk && overlaps(sp, sk)) newSkId = null;
-        }
-        return { speakingId: newSpId, skillsId: newSkId };
-      });
+      setSelection((sel) => ({ ...sel, speakingId: sel.speakingId === slot.slotId ? null : slot.slotId }));
     } else {
-      setSelection((sel) => ({
-        ...sel,
-        skillsId: sel.skillsId === slot.slotId ? null : slot.slotId,
-      }));
+      setSelection((sel) => ({ ...sel, skillsId: sel.skillsId === slot.slotId ? null : slot.slotId }));
+    }
+    // After picking a type, auto-switch to the other tab if it is still empty.
+    if (isPicking) {
+      const otherPicked = slot.type === 'Speaking' ? !!selection.skillsId : !!selection.speakingId;
+      if (!otherPicked) setTimeout(() => setActiveType(slot.type === 'Speaking' ? '3 Skills' : 'Speaking'), 220);
     }
   }
 
   const initials = step1.fullName.trim().slice(0, 2).toUpperCase() || '??';
+  const activeSlots = slots.filter((s) => s.type === activeType);
+  const activeAvail = activeSlots.filter((s) => s.remaining > 0).length;
 
   return (
     <>
@@ -667,52 +672,55 @@ function CalendarStep({
         <button className="btn-link" onClick={onBack}>← Sửa thông tin</button>
       </div>
 
-      <div
-        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 12, marginBottom: 'var(--s-3)' }}
-      >
-        <div>
-          <h1 style={{ fontSize: 'var(--fs-xl)', letterSpacing: '-.02em' }}>Chọn 2 ca thi của bạn</h1>
-          <p className="text-sm text-muted mt-1">
-            Chọn <b style={{ color: 'var(--brand-700)' }}>1 ca Speaking</b> và{' '}
-            <b style={{ color: 'var(--accent-700)' }}>1 ca 3 Skills</b>. Hệ thống sẽ tự khoá ca trùng giờ.
-          </p>
-        </div>
-        <div className="cal-legend">
-          <span className="legend-item">
-            <span
-              className="legend-swatch"
-              style={{ background: 'var(--brand-100)', border: '1px solid var(--brand-300)' }}
-            />
-            Speaking
-          </span>
-          <span className="legend-item">
-            <span
-              className="legend-swatch"
-              style={{ background: 'var(--accent-100)', border: '1px solid var(--accent-300)' }}
-            />
-            3 Skills
-          </span>
-          <span className="legend-item">
-            <span
-              className="legend-swatch"
-              style={{
-                background:
-                  'repeating-linear-gradient(135deg, var(--ink-100) 0 4px, var(--ink-50) 4px 8px)',
-                border: '1px solid var(--ink-200)',
-              }}
-            />
-            Hết
-          </span>
-        </div>
+      <div className="mb-3">
+        <h1 style={{ fontSize: 'var(--fs-xl)', letterSpacing: '-.02em' }}>Chọn 2 ca thi của bạn</h1>
+        <p className="text-sm text-muted mt-1">
+          Chọn lần lượt <b style={{ color: 'var(--brand-700)' }}>1 ca Speaking</b> và{' '}
+          <b style={{ color: 'var(--accent-700)' }}>1 ca 3 Skills</b>. Hệ thống tự khoá ca trùng giờ với lựa chọn của bạn.
+        </p>
       </div>
 
-      <div className="cal-wrap">
+      <div className="type-tabs">
+        <TypeTab
+          tone="sp"
+          num="1"
+          active={activeType === 'Speaking'}
+          picked={!!spSel}
+          label="Speaking"
+          duration="60 phút"
+          statusText={spSel ? `${dayHeader(spSel.date).label} · ${minToHHmm(spSel.startMin)}–${minToHHmm(spSel.endMin)}` : 'Click chọn ca'}
+          onClick={() => setActiveType('Speaking')}
+        />
+        <TypeTab
+          tone="sk"
+          num="2"
+          active={activeType === '3 Skills'}
+          picked={!!skSel}
+          label="3 Skills"
+          duration="120 phút"
+          statusText={skSel ? `${dayHeader(skSel.date).label} · ${minToHHmm(skSel.startMin)}–${minToHHmm(skSel.endMin)}` : 'Click chọn ca'}
+          onClick={() => setActiveType('3 Skills')}
+        />
+      </div>
+
+      <div className={`cal-wrap tone-${tone}`}>
         <div className="cal-toolbar">
           <div className="week-nav">
+            <button className="iconbtn" disabled aria-label="Tuần trước">‹</button>
             <span className="week-label">{weekRangeLabel(dates)}</span>
+            <button className="iconbtn" disabled aria-label="Tuần sau">›</button>
           </div>
-          <div className="text-xs text-muted">
-            {slots.filter((s) => s.remaining > 0).length} ca còn chỗ · {slots.length} ca tổng
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="text-xs text-muted">
+              Đang xem{' '}
+              <b style={{ color: activeType === 'Speaking' ? 'var(--brand-700)' : 'var(--accent-700)' }}>{activeType}</b>{' '}
+              · {activeAvail} ca còn chỗ · {activeSlots.length} tổng
+            </span>
+            {lockedOther && (
+              <span className="locked-chip">
+                ✓ {lockedOther.type} đã chọn: {dayHeader(lockedOther.date).label} · {minToHHmm(lockedOther.startMin)}
+              </span>
+            )}
           </div>
         </div>
 
@@ -743,8 +751,27 @@ function CalendarStep({
                 const blocks = (byDate[date] ?? []).filter(
                   (s) => Math.floor(s.startMin / 60) === h,
                 );
+                const showLocked =
+                  !!lockedOther && lockedOther.date === date && Math.floor(lockedOther.startMin / 60) === h;
                 return (
                   <div key={date} className="cal-cell">
+                    {showLocked && lockedOther && (
+                      <div
+                        className={`cal-block locked ${lockedOther.type === 'Speaking' ? 'sp' : 'sk'}`}
+                        style={{
+                          top: ((lockedOther.startMin - h * 60) / 60) * ROW_H + 2,
+                          height: ((lockedOther.endMin - lockedOther.startMin) / 60) * ROW_H - 4,
+                        }}
+                        title={`Ca ${lockedOther.type} đã chọn · chuyển tab để sửa`}
+                      >
+                        <div className="b-time">
+                          {minToHHmm(lockedOther.startMin)}–{minToHHmm(lockedOther.endMin)}
+                        </div>
+                        <div className="b-meta">
+                          <span className="b-loc">{lockedOther.type} đã chọn</span>
+                        </div>
+                      </div>
+                    )}
                     {blocks.map((slot) => {
                       const st = slotSt(slot, spSel, skSel, curSpId, curSkId);
                       const topPx = ((slot.startMin - h * 60) / 60) * ROW_H;
@@ -800,10 +827,50 @@ function CalendarStep({
       </div>
 
       <p className="text-xs text-muted mt-3">
-        💡 <b>Mẹo:</b> Click vào block để chọn / bỏ chọn. Block bị mờ + gạch chéo là trùng giờ với
-        ca bạn vừa chọn.
+        💡 <b>Mẹo:</b> Chọn xong một ca sẽ tự nhảy sang tab còn lại. Block nét đứt là ca bạn đã chọn ở
+        tab kia; block gạch chéo là trùng giờ.
       </p>
     </>
+  );
+}
+
+// ─── Type Tab · segmented control above the calendar ──────────────────────
+
+function TypeTab({
+  tone,
+  num,
+  active,
+  picked,
+  label,
+  duration,
+  statusText,
+  onClick,
+}: {
+  tone: 'sp' | 'sk';
+  num: string;
+  active: boolean;
+  picked: boolean;
+  label: string;
+  duration: string;
+  statusText: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`type-tab ${tone} ${active ? 'active' : ''} ${picked ? 'picked' : ''}`}
+      onClick={onClick}
+      aria-pressed={active}
+    >
+      <div className="tt-num">{picked ? '✓' : num}</div>
+      <div className="tt-body">
+        <div className="tt-label">
+          {label}
+          <span className="tt-dur"> · {duration}</span>
+        </div>
+        <div className={`tt-status ${picked ? 'picked' : ''}`}>{statusText}</div>
+      </div>
+      {active && <div className="tt-indicator" aria-hidden />}
+    </button>
   );
 }
 
