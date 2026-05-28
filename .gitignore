@@ -9,3 +9,4 @@ gas/.clasp.json
 .env
 .env.local
 .env.*.local
+tsconfig.tsbuildinfo
