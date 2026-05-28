@@ -1,0 +1,137 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Screen-specific styles · Sign-in, Success, Booking Display
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ─── Sign-in screen ───────────────────────────────────────────────────── */
+.signin {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--white);
+  position: relative;
+  overflow: hidden;
+}
+.signin-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 10%, var(--brand-50) 0%, transparent 50%),
+    radial-gradient(circle at 80% 90%, var(--accent-50) 0%, transparent 50%);
+  pointer-events: none;
+}
+.signin-content {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-6);
+}
+.signin-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--white);
+  border: 1px solid var(--ink-150);
+  border-radius: var(--r-xl);
+  box-shadow: var(--sh-3);
+  padding: var(--s-8) var(--s-7) var(--s-6);
+  text-align: center;
+}
+.signin-icon {
+  width: 56px; height: 56px;
+  border-radius: var(--r-lg);
+  background: var(--brand-50);
+  color: var(--brand-500);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 26px;
+  margin-bottom: var(--s-4);
+}
+.signin h1 { font-size: var(--fs-2xl); margin-bottom: var(--s-2); letter-spacing: -0.02em; }
+.signin .sub { color: var(--ink-500); font-size: var(--fs-base); margin-bottom: var(--s-6); }
+.signin-meta { display: flex; justify-content: center; gap: var(--s-4); margin-top: var(--s-4); font-size: var(--fs-xs); color: var(--ink-500); }
+.signin-meta span { display: inline-flex; align-items: center; gap: 4px; }
+
+.gbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--s-3);
+  width: 100%; height: 48px;
+  border: 1px solid var(--ink-200);
+  border-radius: var(--r-sm);
+  background: var(--white);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  color: var(--ink-900);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+}
+.gbtn:hover { background: var(--ink-25); box-shadow: var(--sh-2); border-color: var(--ink-300); }
+.gbtn:active { background: var(--ink-50); }
+.gbtn:focus-visible { outline: none; box-shadow: var(--sh-focus); }
+
+/* ─── Success screen ───────────────────────────────────────────────────── */
+.success-hero { text-align: center; padding: var(--s-6) var(--s-5) var(--s-4); }
+.success-check { width: 72px; height: 72px; border-radius: 50%; background: var(--success-50); border: 2px solid var(--success-500); color: var(--success-600); display: inline-flex; align-items: center; justify-content: center; font-size: 36px; margin-bottom: var(--s-3); animation: pop 400ms var(--ease-out); }
+@keyframes pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.success-title { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; }
+.success-sub { color: var(--ink-500); margin-top: 4px; font-size: var(--fs-base); }
+
+.countdown { display: flex; justify-content: space-between; align-items: center; padding: var(--s-4) var(--s-5); background: linear-gradient(135deg, var(--brand-500) 0%, var(--brand-700) 100%); color: white; border-radius: var(--r-lg); margin-bottom: var(--s-4); box-shadow: var(--sh-2); }
+.countdown .meta .lbl { font-size: var(--fs-xs); color: rgba(255,255,255,0.7); text-transform: uppercase; letter-spacing: 0.08em; }
+.countdown .meta .when { font-size: var(--fs-base); font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.countdown .big { text-align: right; }
+.countdown .big .n { font-size: 36px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+.countdown .big .u { font-size: var(--fs-xs); color: rgba(255,255,255,0.7); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
+
+/* ─── Slot card (booking display / confirm) ────────────────────────────── */
+.bk-slot { display: flex; gap: var(--s-3); padding: var(--s-4); border: 1px solid var(--ink-150); border-radius: var(--r-md); background: var(--white); position: relative; transition: border-color var(--t-fast) var(--ease-out); }
+.bk-slot:hover { border-color: var(--ink-300); }
+.bk-slot .num { width: 32px; height: 32px; border-radius: var(--r-sm); background: var(--brand-50); color: var(--brand-700); font-weight: 800; font-size: var(--fs-base); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.bk-slot.sk .num { background: var(--accent-50); color: var(--accent-700); }
+.bk-slot .body { flex: 1; min-width: 0; }
+.bk-slot .type-lbl { display: inline-block; font-size: var(--fs-xs); font-weight: 700; color: var(--brand-700); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px; }
+.bk-slot.sk .type-lbl { color: var(--accent-700); }
+.bk-slot .when { font-size: var(--fs-md); font-weight: 600; color: var(--ink-900); font-variant-numeric: tabular-nums; }
+.bk-slot .where { font-size: var(--fs-sm); color: var(--ink-500); margin-top: 2px; display: flex; align-items: center; gap: 4px; }
+.bk-slot .action { align-self: center; }
+
+/* ─── Action group with safe distance ──────────────────────────────────── */
+.bk-actions { display: flex; justify-content: space-between; align-items: center; padding: var(--s-4) 0 0; }
+.bk-actions-primary { display: flex; gap: var(--s-2); }
+.bk-actions-secondary { display: flex; gap: var(--s-2); }
+
+/* Dropdown menu */
+.menu-wrap { position: relative; }
+.menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 200px; background: var(--white); border: 1px solid var(--ink-150); border-radius: var(--r-md); box-shadow: var(--sh-4); padding: var(--s-1); z-index: var(--z-overlay); }
+.menu-item { display: flex; align-items: center; gap: var(--s-2); padding: 8px 10px; border-radius: var(--r-xs); cursor: pointer; font-size: var(--fs-sm); color: var(--ink-700); background: transparent; border: 0; width: 100%; text-align: left; }
+.menu-item:hover { background: var(--ink-50); }
+.menu-item.danger { color: var(--danger-600); }
+.menu-item.danger:hover { background: var(--danger-50); }
+.menu-divider { height: 1px; background: var(--ink-100); margin: 4px 0; }
+
+/* Selection states for cal-cell helper */
+.muted-divider { border-top: 1px dashed var(--ink-200); margin: var(--s-3) 0; }
+
+/* preflight loading dots */
+.dots { display: inline-flex; gap: 3px; }
+.dots span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: bounce 1.2s infinite; }
+.dots span:nth-child(2) { animation-delay: 0.15s; }
+.dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-3px); opacity: 1; } }
+
+/* Tooltip on hover for conflict cells (CSS only via title attr) — using title is fine */
+
+/* Empty state */
+.empty-state { padding: var(--s-7) var(--s-4); text-align: center; color: var(--ink-500); }
+.empty-state .icon { font-size: 32px; margin-bottom: var(--s-2); opacity: 0.6; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .cal { --col-gutter: 44px; }
+  .cal-head .date { font-size: var(--fs-base); }
+  .cal-block { padding: 4px 6px; }
+  .cal-block .b-meta { font-size: 10px; }
+  .sticky-summary-inner { flex-direction: column; align-items: stretch; gap: var(--s-3); }
+  .summary-item { min-width: 0; }
+  .summary-items { flex-direction: column; gap: var(--s-2); }
+}

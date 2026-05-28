@@ -1,0 +1,143 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Calendar Week View (Step 2 Variation C)
+   Time-grid · slot blocks positioned by time · interactive
+   ───────────────────────────────────────────────────────────────────────── */
+
+.cal-wrap {
+  background: var(--white);
+  border: 1px solid var(--ink-150);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--sh-1);
+}
+
+/* Calendar toolbar */
+.cal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--ink-150);
+  background: var(--white);
+  flex-wrap: wrap;
+}
+.cal-toolbar .week-nav { display: flex; align-items: center; gap: var(--s-2); }
+.cal-toolbar .week-label { font-weight: 600; color: var(--ink-900); font-size: var(--fs-base); min-width: 180px; text-align: center; }
+.cal-toolbar .iconbtn { width: 32px; height: 32px; border-radius: var(--r-sm); border: 1px solid var(--ink-200); background: var(--white); color: var(--ink-700); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; }
+.cal-toolbar .iconbtn:hover { background: var(--ink-50); border-color: var(--ink-300); }
+.cal-toolbar .iconbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cal-legend { display: flex; gap: var(--s-3); flex-wrap: wrap; align-items: center; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--ink-600); }
+.legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+
+/* Calendar grid */
+.cal {
+  --row-h: 56px;
+  --col-gutter: 56px;
+  display: grid;
+  grid-template-columns: var(--col-gutter) repeat(5, 1fr);
+  background: var(--ink-150);
+  gap: 1px;
+}
+.cal-head {
+  background: var(--white);
+  padding: var(--s-3) var(--s-2);
+  text-align: center;
+  position: sticky; top: 0; z-index: 2;
+  border-bottom: 1px solid var(--ink-150);
+}
+.cal-head.gutter { background: var(--ink-25); }
+.cal-head .day { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-500); text-transform: uppercase; letter-spacing: 0.06em; }
+.cal-head .date { font-size: var(--fs-lg); font-weight: 700; color: var(--ink-900); line-height: 1.2; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.cal-head.today .date { color: var(--brand-500); }
+.cal-head.today { box-shadow: inset 0 -2px 0 var(--brand-500); }
+
+.cal-time { background: var(--ink-25); padding: var(--s-1) var(--s-2); font-size: 11px; color: var(--ink-500); text-align: right; font-variant-numeric: tabular-nums; height: var(--row-h); display: flex; align-items: flex-start; justify-content: flex-end; padding-top: 0; line-height: 1; transform: translateY(-6px); }
+.cal-cell { background: var(--white); height: var(--row-h); position: relative; }
+
+/* Slot block on calendar */
+.cal-block {
+  position: absolute;
+  left: 4px; right: 4px;
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  border: 1px solid;
+  transition: transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
+}
+.cal-block:hover { transform: translateY(-1px); box-shadow: var(--sh-2); z-index: 3; }
+.cal-block:focus-visible { outline: none; box-shadow: var(--sh-focus); z-index: 3; }
+
+.cal-block .b-time { font-weight: 700; font-variant-numeric: tabular-nums; color: inherit; }
+.cal-block .b-meta { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 10.5px; opacity: 0.92; }
+.cal-block .b-loc { font-weight: 500; }
+.cal-block .b-rem { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Type · Speaking (brand blue) */
+.cal-block.sp { background: var(--brand-50); border-color: var(--brand-200); color: var(--brand-800); }
+.cal-block.sp:hover { background: var(--brand-100); border-color: var(--brand-300); }
+.cal-block.sp.sel { background: var(--brand-500); border-color: var(--brand-600); color: white; box-shadow: var(--sh-3); }
+.cal-block.sp.sel:hover { background: var(--brand-600); }
+
+/* Type · 3 Skills (warm amber) */
+.cal-block.sk { background: var(--accent-50); border-color: var(--accent-200); color: var(--accent-700); }
+.cal-block.sk:hover { background: var(--accent-100); border-color: var(--accent-300); }
+.cal-block.sk.sel { background: var(--accent-500); border-color: var(--accent-600); color: white; box-shadow: var(--sh-3); }
+.cal-block.sk.sel:hover { background: var(--accent-600); }
+
+/* Conflict state */
+.cal-block.conflict { background: var(--ink-50); border-color: var(--ink-200); border-style: dashed; color: var(--ink-400); cursor: not-allowed; opacity: 0.85; }
+.cal-block.conflict:hover { transform: none; box-shadow: none; background: var(--ink-50); }
+.cal-block.conflict .b-time { color: var(--ink-400); text-decoration: line-through; }
+.cal-block.conflict .b-rem { color: var(--danger-600); font-weight: 600; }
+
+/* Full state */
+.cal-block.full { background: repeating-linear-gradient(135deg, var(--ink-100) 0 6px, var(--ink-50) 6px 12px); border-color: var(--ink-200); color: var(--ink-500); cursor: not-allowed; opacity: 0.7; }
+.cal-block.full:hover { transform: none; box-shadow: none; }
+.cal-block.full .b-time { text-decoration: line-through; }
+
+/* Selected glow ring on the column */
+.cal-cell.has-selected { background: var(--brand-50); }
+.cal-cell.has-conflict { background: var(--danger-50); }
+
+/* Selection ribbon — shows ✓ in top-right */
+.cal-block.sel::after {
+  content: '✓';
+  position: absolute;
+  top: 4px; right: 6px;
+  width: 16px; height: 16px;
+  background: white;
+  color: var(--brand-600);
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+.cal-block.sk.sel::after { color: var(--accent-600); }
+
+/* Tooltip hint on hover (CSS-only) */
+.cal-block .b-conflict-tag {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 700;
+  color: var(--danger-700);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Empty cell hint (compact) */
+.cal-empty-hint {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center; justify-content: center;
+  color: var(--ink-300);
+  font-size: 11px;
+}
