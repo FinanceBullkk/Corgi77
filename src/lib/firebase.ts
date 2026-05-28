@@ -4,12 +4,12 @@ import type { User } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyBFmV3JwM-ICuc7kQALZCNcMR3736sgycE',
-  authDomain: 'corgi7-d129d.firebaseapp.com',
-  projectId: 'corgi7-d129d',
-  storageBucket: 'corgi7-d129d.firebasestorage.app',
-  messagingSenderId: '544246358745',
-  appId: '1:544246358745:web:8bb7d675c5e986a61954c8',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 const app = initializeApp(firebaseConfig);

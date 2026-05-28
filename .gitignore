@@ -6,3 +6,6 @@ dist
 gas/index.html
 gas/.clasp.json
 .clasp-credentials.json
+.env
+.env.local
+.env.*.local
