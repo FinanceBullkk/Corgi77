@@ -11,6 +11,10 @@ import {
   type MyBooking,
   type Slot,
 } from './lib/gas';
+import { fetchAdminEmails, isAdmin } from './lib/admin';
+import { AdminPanel } from './AdminPanel';
+import { onAuth, signInWithGoogle } from './lib/firebase';
+import type { User } from 'firebase/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -125,6 +129,10 @@ function AppInner() {
   const [selection, setSelection] = useState<Selection>({ speakingId: null, skillsId: null });
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [isEditing, setIsEditing] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [canAdmin, setCanAdmin] = useState(false);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  const fbUserRef = useRef<User | null>(null);
   const skewRef = useRef(0);
   const [_tick, setTick] = useState(0);
 
@@ -132,6 +140,14 @@ function AppInner() {
     const id = setInterval(() => setTick((n) => n + 1), 30_000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!data?.email) return;
+    setCanAdmin(isAdmin(data.email));
+    fetchAdminEmails()
+      .then(() => setCanAdmin(isAdmin(data.email)))
+      .catch(() => {});
+  }, [data?.email]);
 
   useEffect(() => {
     init()
@@ -149,11 +165,39 @@ function AppInner() {
       .catch((e: Error) => setLoadErr(e.message || 'Không tải được dữ liệu.'));
   }, []);
 
+  useEffect(() => onAuth((u) => { fbUserRef.current = u; }), []);
+
   const pushToast = useCallback((kind: ToastItem['kind'], text: string) => {
     const id = genId();
     setToasts((t) => [...t, { id, kind, text }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
   }, []);
+
+  const openAdmin = useCallback(async () => {
+    try {
+      let email = fbUserRef.current?.email ?? null;
+      if (!email) {
+        const cred = await signInWithGoogle();
+        email = cred.user?.email ?? null;
+      }
+      if (!email) {
+        pushToast('error', 'Không lấy được email đăng nhập Google.');
+        return;
+      }
+      await fetchAdminEmails().catch(() => {});
+      if (!isAdmin(email)) {
+        pushToast('error', `Tài khoản ${email} không có quyền admin.`);
+        return;
+      }
+      setAdminEmail(email);
+      setAdminOpen(true);
+    } catch (e) {
+      const msg = (e as Error)?.message || String(e);
+      if (!/popup-closed|cancelled-popup|popup-blocked/i.test(msg)) {
+        pushToast('error', 'Đăng nhập admin thất bại: ' + msg);
+      }
+    }
+  }, [pushToast]);
 
   if (loadErr) {
     return (
@@ -179,13 +223,24 @@ function AppInner() {
     );
   }
 
+  if (adminOpen) {
+    return <AdminPanel adminEmail={adminEmail ?? data.email} onExit={() => setAdminOpen(false)} />;
+  }
+
   const deadlineInfo = computeDeadline(data.deadline, data.serverNow, data.deadlinePassed, skewRef.current);
   const spSel = data.slots.find((s) => s.slotId === selection.speakingId) ?? null;
   const skSel = data.slots.find((s) => s.slotId === selection.skillsId) ?? null;
   const curSpId = isEditing ? (data.myBooking?.speakingSlotId ?? null) : null;
   const curSkId = isEditing ? (data.myBooking?.skillsSlotId ?? null) : null;
 
-  const topbar = <Topbar email={data.email} deadlineInfo={deadlineInfo} />;
+  const topbar = (
+    <Topbar
+      email={data.email}
+      deadlineInfo={deadlineInfo}
+      canAdmin={canAdmin}
+      onOpenAdmin={openAdmin}
+    />
+  );
 
   // ── Step 1
   if (screen === 'step1') {
@@ -396,7 +451,17 @@ function AppInner() {
 
 // ─── Topbar ───────────────────────────────────────────────────────────────
 
-function Topbar({ email, deadlineInfo }: { email: string; deadlineInfo: DeadlineInfo | null }) {
+function Topbar({
+  email,
+  deadlineInfo,
+  canAdmin,
+  onOpenAdmin,
+}: {
+  email: string;
+  deadlineInfo: DeadlineInfo | null;
+  canAdmin?: boolean;
+  onOpenAdmin?: () => void;
+}) {
   return (
     <header className="topbar">
       <div className="topbar-inner">
@@ -417,6 +482,9 @@ function Topbar({ email, deadlineInfo }: { email: string; deadlineInfo: Deadline
             </span>
           )}
           {deadlineInfo?.passed && <span className="pill danger">Đã đóng đăng ký</span>}
+          {canAdmin && onOpenAdmin && (
+            <button className="admin-btn" onClick={onOpenAdmin}>🛠 Admin</button>
+          )}
           <div className="user-chip" title={email}>
             <span className="avatar">{emailInitials(email)}</span>
             <span>{emailShortName(email)}</span>

@@ -77,7 +77,7 @@ function withRemaining(state: MockState): Slot[] {
   }));
 }
 
-const MOCK_EMAIL = 'devuser@cyberlogitec.com';
+const MOCK_EMAIL = 'hao.nha@cyberlogitec.com';
 const MOCK_DEADLINE = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
 export async function mockInit(): Promise<InitResult> {
