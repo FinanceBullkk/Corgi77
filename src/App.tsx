@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import {
   book,
@@ -12,7 +12,102 @@ import {
   type Slot,
 } from './lib/gas';
 
-type Banner = { kind: 'success' | 'error' | 'info'; text: string } | null;
+// ─── Types ────────────────────────────────────────────────────────────────
+
+type FlowState = 'step1' | 'step2' | 'confirm' | 'success' | 'display';
+type ToastItem = { id: string; kind: 'success' | 'error' | 'info'; text: string };
+type Step1Data = { empCode: string; fullName: string; bu: string };
+type Selection = { speakingId: string | null; skillsId: string | null };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+function emailInitials(email: string): string {
+  return email.split('@')[0].slice(0, 2).toUpperCase();
+}
+
+function emailShortName(email: string): string {
+  return email.split('@')[0];
+}
+
+interface DeadlineInfo {
+  daysLeft: number;
+  hoursLeft: number;
+  urgent: boolean;
+  text: string;
+  passed: boolean;
+}
+
+function computeDeadline(
+  deadline: string | null,
+  _serverNow: string,
+  deadlinePassed: boolean,
+  skew: number,
+): DeadlineInfo | null {
+  if (!deadline) return null;
+  if (deadlinePassed)
+    return { daysLeft: 0, hoursLeft: 0, urgent: true, text: 'Đã đóng đăng ký', passed: true };
+  const diffMs = new Date(deadline).getTime() - (Date.now() + skew);
+  if (diffMs <= 0)
+    return { daysLeft: 0, hoursLeft: 0, urgent: true, text: 'Đã đóng đăng ký', passed: true };
+  const totalMin = Math.floor(diffMs / 60_000);
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const mins = totalMin % 60;
+  let text: string;
+  if (totalMin < 60) text = `Còn ${mins} phút`;
+  else if (days > 0) text = `Còn ${days} ngày ${hours} giờ`;
+  else text = `Còn ${hours} giờ ${mins} phút`;
+  return { daysLeft: days, hoursLeft: hours, urgent: totalMin < 60, text, passed: false };
+}
+
+function uniqueSortedDates(slots: Slot[]): string[] {
+  return [...new Set(slots.map((s) => s.date))].sort();
+}
+
+function dayHeader(date: string): { abbr: string; label: string } {
+  const d = new Date(date + 'T00:00:00');
+  const abbrs = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+  const dd = d.getDate().toString().padStart(2, '0');
+  const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+  return { abbr: abbrs[d.getDay()], label: `${dd}/${mm}` };
+}
+
+function weekRangeLabel(dates: string[]): string {
+  if (!dates.length) return '';
+  const a = new Date(dates[0] + 'T00:00:00');
+  const b = new Date(dates[dates.length - 1] + 'T00:00:00');
+  return `Tuần ${a.getDate()}/${a.getMonth() + 1} – ${b.getDate()}/${b.getMonth() + 1}/${b.getFullYear()}`;
+}
+
+function daysUntil(isoDate: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(isoDate + 'T00:00:00');
+  return Math.max(0, Math.ceil((d.getTime() - today.getTime()) / 86_400_000));
+}
+
+type SlotSt = 'sel' | 'full' | 'conflict' | 'ok';
+
+function slotSt(
+  s: Slot,
+  spSel: Slot | null,
+  skSel: Slot | null,
+  curSpId: string | null,
+  curSkId: string | null,
+): SlotSt {
+  if (s.slotId === spSel?.slotId || s.slotId === skSel?.slotId) return 'sel';
+  const isCur = s.slotId === curSpId || s.slotId === curSkId;
+  if (s.remaining <= 0 && !isCur) return 'full';
+  const other = s.type === 'Speaking' ? skSel : spSel;
+  if (other && overlaps(s, other)) return 'conflict';
+  return 'ok';
+}
+
+function genId(): string {
+  return Math.random().toString(36).slice(2);
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────
 
 export function App() {
   return (
@@ -25,31 +120,49 @@ export function App() {
 function AppInner() {
   const [data, setData] = useState<InitResult | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [banner, setBanner] = useState<Banner>(null);
+  const [screen, setScreen] = useState<FlowState>('step1');
+  const [step1, setStep1] = useState<Step1Data>({ empCode: '', fullName: '', bu: '' });
+  const [selection, setSelection] = useState<Selection>({ speakingId: null, skillsId: null });
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [isEditing, setIsEditing] = useState(false);
+  const skewRef = useRef(0);
+  const [_tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     init()
-      .then(setData)
+      .then((d) => {
+        skewRef.current = new Date(d.serverNow).getTime() - Date.now();
+        setData(d);
+        if (d.myBooking) {
+          setScreen('display');
+          setStep1({ empCode: d.myBooking.empCode, fullName: d.myBooking.fullName, bu: d.myBooking.bu });
+          setSelection({ speakingId: d.myBooking.speakingSlotId, skillsId: d.myBooking.skillsSlotId });
+        } else {
+          setScreen('step1');
+        }
+      })
       .catch((e: Error) => setLoadErr(e.message || 'Không tải được dữ liệu.'));
   }, []);
 
-  // Auto-dismiss: success 10s, error/info 8s
-  useEffect(() => {
-    if (!banner) return;
-    const ms = banner.kind === 'success' ? 10000 : 8000;
-    const id = setTimeout(() => setBanner(null), ms);
-    return () => clearTimeout(id);
-  }, [banner]);
+  const pushToast = useCallback((kind: ToastItem['kind'], text: string) => {
+    const id = genId();
+    setToasts((t) => [...t, { id, kind, text }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
+  }, []);
 
   if (loadErr) {
     return (
       <div className="app">
         <div className="error-screen">
+          <div className="error-icon">⚠</div>
           <h2>Không tải được dữ liệu</h2>
           <p>{loadErr}</p>
-          <button className="primary" onClick={() => window.location.reload()}>
-            Tải lại
-          </button>
+          <button className="btn" onClick={() => window.location.reload()}>Tải lại</button>
         </div>
       </div>
     );
@@ -58,157 +171,826 @@ function AppInner() {
   if (!data) {
     return (
       <div className="app">
-        <div className="loading">
-          <span className="spinner" /> Đang tải…
+        <div className="loading-screen">
+          <div className="spinner" />
+          Đang tải…
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="app">
-      <Header data={data} />
+  const deadlineInfo = computeDeadline(data.deadline, data.serverNow, data.deadlinePassed, skewRef.current);
+  const spSel = data.slots.find((s) => s.slotId === selection.speakingId) ?? null;
+  const skSel = data.slots.find((s) => s.slotId === selection.skillsId) ?? null;
+  const curSpId = isEditing ? (data.myBooking?.speakingSlotId ?? null) : null;
+  const curSkId = isEditing ? (data.myBooking?.skillsSlotId ?? null) : null;
 
-      {banner && (
-        <div className={`banner ${banner.kind}`} role="status">
-          <span>{banner.text}</span>
-          <button
-            type="button"
-            className="banner-close"
-            aria-label="Đóng"
-            onClick={() => setBanner(null)}
-          >
-            ×
-          </button>
+  const topbar = <Topbar email={data.email} deadlineInfo={deadlineInfo} />;
+
+  // ── Step 1
+  if (screen === 'step1') {
+    if (!isEditing && !data.allowEnrollment) {
+      return (
+        <div className="app">
+          {topbar}
+          <main className="container">
+            <div className="banner warn mt-4">
+              <span className="banner-icon">🔒</span>
+              <div>Đăng ký hiện đang bị khoá. Vui lòng liên hệ Ban tổ chức.</div>
+            </div>
+          </main>
         </div>
-      )}
+      );
+    }
+    if (!isEditing && data.deadlinePassed) {
+      return (
+        <div className="app">
+          {topbar}
+          <main className="container">
+            <div className="banner danger mt-4">
+              <span className="banner-icon">⏰</span>
+              <div>Đã hết hạn đăng ký. Bạn chưa đăng ký ca thi — vui lòng liên hệ Ban tổ chức.</div>
+            </div>
+          </main>
+        </div>
+      );
+    }
+    return (
+      <div className="app">
+        {topbar}
+        <main className="container">
+          <Step1Form
+            initial={step1}
+            onContinue={(d) => { setStep1(d); setScreen('step2'); }}
+            onCancel={isEditing ? () => { setIsEditing(false); setScreen('display'); } : undefined}
+          />
+        </main>
+        <ToastStack toasts={toasts} />
+      </div>
+    );
+  }
 
-      <Body data={data} setData={setData} setBanner={setBanner} />
-    </div>
-  );
+  // ── Step 2 + Confirm overlay
+  if (screen === 'step2' || screen === 'confirm') {
+    const canSubmit = !!(selection.speakingId && selection.skillsId);
+
+    const handleConfirmSubmit = async () => {
+      if (!selection.speakingId || !selection.skillsId) return;
+      try {
+        const res = await book({
+          empCode: step1.empCode,
+          fullName: step1.fullName,
+          bu: step1.bu,
+          speakingSlotId: selection.speakingId,
+          skillsSlotId: selection.skillsId,
+        });
+        if (!res.ok) {
+          pushToast('error', res.error || 'Đăng ký thất bại.');
+          if (res.state) setData(res.state);
+          setScreen('step2');
+        } else if (res.state) {
+          setData(res.state);
+          setIsEditing(false);
+          setScreen('success');
+        } else {
+          pushToast('error', 'Đăng ký thành công nhưng không nhận được state. Tải lại trang.');
+          setScreen('step2');
+        }
+      } catch (e) {
+        pushToast('error', (e as Error).message || 'Đăng ký thất bại.');
+        setScreen('step2');
+      }
+    };
+
+    return (
+      <div className="app">
+        {topbar}
+        <main className="container wide" style={{ paddingBottom: 24 }}>
+          <CalendarStep
+            step1={step1}
+            slots={data.slots}
+            selection={selection}
+            setSelection={setSelection}
+            curSpId={curSpId}
+            curSkId={curSkId}
+            deadlinePassed={data.deadlinePassed}
+            onBack={() => setScreen('step1')}
+          />
+        </main>
+
+        {screen === 'confirm' && (
+          <ConfirmModal
+            step1={step1}
+            slots={data.slots}
+            selection={selection}
+            isEditing={isEditing}
+            onCancel={() => setScreen('step2')}
+            onConfirm={handleConfirmSubmit}
+          />
+        )}
+
+        <div className="sticky-summary">
+          <div className="sticky-summary-inner">
+            <div className="summary-items">
+              <div className={`summary-item ${spSel ? 'filled' : ''}`}>
+                <div className="badge">①</div>
+                <div>
+                  <div className="lbl">Speaking</div>
+                  <div className={`val ${spSel ? '' : 'empty'}`}>
+                    {spSel
+                      ? `${formatDateVi(spSel.date)} · ${minToHHmm(spSel.startMin)}–${minToHHmm(spSel.endMin)}`
+                      : 'Chưa chọn ca'}
+                  </div>
+                </div>
+              </div>
+              <div className={`summary-item ${skSel ? 'filled' : ''}`}>
+                <div className="badge">②</div>
+                <div>
+                  <div className="lbl">3 Skills</div>
+                  <div className={`val ${skSel ? '' : 'empty'}`}>
+                    {skSel
+                      ? `${formatDateVi(skSel.date)} · ${minToHHmm(skSel.startMin)}–${minToHHmm(skSel.endMin)}`
+                      : 'Chưa chọn ca'}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              <button className="btn ghost" onClick={() => setScreen('step1')}>← Quay lại</button>
+              <button
+                className={`btn ${canSubmit ? '' : 'disabled'}`}
+                disabled={!canSubmit}
+                onClick={() => setScreen('confirm')}
+              >
+                Tiếp tục →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <ToastStack toasts={toasts} />
+      </div>
+    );
+  }
+
+  // ── Success
+  if (screen === 'success') {
+    return (
+      <div className="app">
+        {topbar}
+        <main className="container">
+          <SuccessScreen
+            email={data.email}
+            step1={step1}
+            slots={data.slots}
+            selection={selection}
+            maxChanges={data.maxChanges}
+            onViewDetail={() => {
+              if (data.myBooking) {
+                setSelection({ speakingId: data.myBooking.speakingSlotId, skillsId: data.myBooking.skillsSlotId });
+              }
+              setScreen('display');
+            }}
+          />
+        </main>
+      </div>
+    );
+  }
+
+  // ── Display
+  if (screen === 'display' && data.myBooking) {
+    return (
+      <div className="app">
+        {topbar}
+        <main className="container">
+          <BookingDisplay
+            booking={data.myBooking}
+            slots={data.slots}
+            deadlinePassed={data.deadlinePassed}
+            maxChanges={data.maxChanges}
+            onEdit={() => {
+              setIsEditing(true);
+              if (data.myBooking) {
+                setSelection({ speakingId: data.myBooking.speakingSlotId, skillsId: data.myBooking.skillsSlotId });
+              }
+              setScreen('step2');
+            }}
+            onCancelled={(newState) => {
+              pushToast('success', 'Đã hủy đăng ký.');
+              setData(newState);
+              setStep1({ empCode: '', fullName: '', bu: '' });
+              setSelection({ speakingId: null, skillsId: null });
+              setIsEditing(false);
+              setScreen('step1');
+            }}
+            onError={(msg) => pushToast('error', msg)}
+          />
+        </main>
+        <ToastStack toasts={toasts} />
+      </div>
+    );
+  }
+
+  return null;
 }
 
-function Header({ data }: { data: InitResult }) {
+// ─── Topbar ───────────────────────────────────────────────────────────────
+
+function Topbar({ email, deadlineInfo }: { email: string; deadlineInfo: DeadlineInfo | null }) {
   return (
-    <header className="app-header">
-      <div>
-        <h1>Đăng ký thi Assessment Q2 2026</h1>
-        <div className="sub">
-          Đăng nhập: <strong>{data.email}</strong>
+    <header className="topbar">
+      <div className="topbar-inner">
+        <div className="topbar-left">
+          <div className="logo">
+            <span className="logo-mark">CL</span>
+          </div>
+          <div style={{ width: 1, height: 24, background: 'var(--ink-150)', flexShrink: 0 }} />
+          <div className="topbar-title">
+            <span className="t">Assessment Booking</span>
+            <span className="s">Q2 2026 · English Proficiency Test</span>
+          </div>
+        </div>
+        <div className="topbar-right">
+          {deadlineInfo && !deadlineInfo.passed && (
+            <span className={`pill ${deadlineInfo.urgent ? 'danger' : deadlineInfo.daysLeft <= 3 ? 'warn' : 'brand'}`}>
+              ⏱ Hạn: {deadlineInfo.text}
+            </span>
+          )}
+          {deadlineInfo?.passed && <span className="pill danger">Đã đóng đăng ký</span>}
+          <div className="user-chip" title={email}>
+            <span className="avatar">{emailInitials(email)}</span>
+            <span>{emailShortName(email)}</span>
+          </div>
         </div>
       </div>
-      <DeadlinePill data={data} />
     </header>
   );
 }
 
-function DeadlinePill({ data }: { data: InitResult }) {
-  // Tick mỗi 30s để countdown sống.
-  const [, force] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => force((n) => n + 1), 30_000);
-    return () => clearInterval(id);
-  }, []);
+// ─── Stepper ──────────────────────────────────────────────────────────────
 
-  if (!data.deadline) return null;
-
-  const deadlineMs = new Date(data.deadline).getTime();
-  // Bù offset (server clock vs client clock) tại thời điểm load.
-  const serverLoadMs = new Date(data.serverNow).getTime();
-  const clientLoadMs = useRef(Date.now()).current;
-  const skew = serverLoadMs - clientLoadMs;
-  const effectiveNow = Date.now() + skew;
-  const diffMs = deadlineMs - effectiveNow;
-
-  if (data.deadlinePassed || diffMs <= 0) {
-    return <span className="deadline-pill passed">Đã đóng đăng ký</span>;
-  }
-
-  const totalMin = Math.floor(diffMs / 60_000);
-  const days = Math.floor(totalMin / (60 * 24));
-  const hours = Math.floor((totalMin % (60 * 24)) / 60);
-  const mins = totalMin % 60;
-  const warn = totalMin < 60 * 24 * 2;
-  const urgent = totalMin < 60;
-
-  let text: string;
-  if (urgent) text = `Sắp đóng: còn ${mins} phút`;
-  else if (days > 0) text = `Hạn đăng ký: còn ${days} ngày ${hours} giờ`;
-  else text = `Hạn đăng ký: còn ${hours} giờ ${mins} phút`;
-
-  return <span className={`deadline-pill ${urgent ? 'passed' : warn ? 'warn' : ''}`}>{text}</span>;
+function Stepper({ current }: { current: number }) {
+  const steps = [
+    { n: 1, label: 'Thông tin' },
+    { n: 2, label: 'Chọn ca thi' },
+    { n: 3, label: 'Xác nhận' },
+  ];
+  return (
+    <div className="stepper mb-5">
+      {steps.map((s, i) => (
+        <Fragment key={s.n}>
+          <div className={`step ${current === s.n ? 'active' : ''} ${current > s.n ? 'done' : ''}`}>
+            <div className="step-dot">{current > s.n ? '✓' : s.n}</div>
+            <span className="step-label">{s.label}</span>
+          </div>
+          {i < steps.length - 1 && (
+            <div className={`step-line ${current > s.n ? 'done' : ''}`} />
+          )}
+        </Fragment>
+      ))}
+    </div>
+  );
 }
 
-function Body({
-  data,
-  setData,
-  setBanner,
+// ─── Step 1 · Info Form ───────────────────────────────────────────────────
+
+function Step1Form({
+  initial,
+  onContinue,
+  onCancel,
 }: {
-  data: InitResult;
-  setData: (d: InitResult) => void;
-  setBanner: (b: Banner) => void;
+  initial: Step1Data;
+  onContinue: (d: Step1Data) => void;
+  onCancel?: () => void;
 }) {
-  const [editing, setEditing] = useState<boolean>(!data.myBooking);
+  const [empCode, setEmpCode] = useState(initial.empCode);
+  const [fullName, setFullName] = useState(initial.fullName);
+  const [bu, setBu] = useState(initial.bu);
+  const [checking, setChecking] = useState(false);
 
-  if (data.myBooking && !editing) {
-    return (
-      <BookingDisplay
-        booking={data.myBooking}
-        slots={data.slots}
-        deadlinePassed={data.deadlinePassed}
-        maxChanges={data.maxChanges}
-        onEdit={() => setEditing(true)}
-        onCancelled={(state) => {
-          setBanner({ kind: 'success', text: 'Đã hủy đăng ký.' });
-          setData(state);
-          setEditing(true);
-        }}
-        onError={(text) => setBanner({ kind: 'error', text })}
-      />
-    );
-  }
+  const empValid = /^\d{6}$/.test(empCode);
+  const nameValid = fullName.trim().length >= 2;
+  const buValid = bu.trim().length >= 2;
+  const allValid = empValid && nameValid && buValid;
+  const validCount = [empValid, nameValid, buValid].filter(Boolean).length;
 
-  if (!data.allowEnrollment) {
-    return (
-      <div className="banner error">
-        <span>
-          Đăng ký hiện đang bị khoá. Vui lòng liên hệ Ban tổ chức.
-        </span>
-      </div>
-    );
-  }
-
-  if (data.deadlinePassed) {
-    return (
-      <div className="banner error">
-        <span>
-          Đã hết hạn đăng ký. Bạn chưa đăng ký ca thi nào — vui lòng liên hệ Ban tổ chức.
-        </span>
-      </div>
-    );
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!allValid) return;
+    setChecking(true);
+    setTimeout(() => {
+      setChecking(false);
+      onContinue({ empCode, fullName: fullName.trim(), bu: bu.trim().toUpperCase() });
+    }, 400);
   }
 
   return (
-    <BookingForm
-      data={data}
-      onBooked={(state, emailSent) => {
-        setBanner({
-          kind: 'success',
-          text: emailSent
-            ? 'Đăng ký thành công! Email xác nhận đã được gửi.'
-            : 'Đăng ký thành công!',
-        });
-        setData(state);
-        setEditing(false);
-      }}
-      onError={(text, state) => {
-        setBanner({ kind: 'error', text });
-        if (state) setData(state);
-      }}
-      onCancelEdit={data.myBooking ? () => setEditing(false) : undefined}
-    />
+    <>
+      <Stepper current={1} />
+      <form className="card" onSubmit={handleSubmit}>
+        <div className="card-hd">
+          <div className="card-title">Thông tin học viên</div>
+          <div className="card-sub">
+            Điền chính xác để hệ thống xác nhận eligibility trước khi chọn ca thi.
+          </div>
+        </div>
+        <div className="card-bd">
+          <div className="field">
+            <label className="label" htmlFor="empCode">
+              Mã nhân viên <span className="req">*</span>
+              <span className="opt">· 6 chữ số</span>
+            </label>
+            <input
+              id="empCode"
+              className={`input ${empCode && !empValid ? 'error' : ''}`}
+              placeholder="VD: 262010"
+              value={empCode}
+              onChange={(e) => setEmpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              inputMode="numeric"
+              maxLength={6}
+              autoFocus
+            />
+            {empCode && !empValid && <span className="help error">⚠ Mã NV phải có đúng 6 chữ số</span>}
+            {empValid && <span className="help success">✓ Hợp lệ</span>}
+          </div>
+
+          <div className="field">
+            <label className="label" htmlFor="fullName">
+              Họ và tên <span className="req">*</span>
+            </label>
+            <input
+              id="fullName"
+              className="input"
+              placeholder="Nguyễn Văn An"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              maxLength={50}
+            />
+            <span className="help">Đúng theo tên trên hệ thống nhân sự</span>
+          </div>
+
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label" htmlFor="bu">
+              Business Unit (BU) <span className="req">*</span>
+            </label>
+            <input
+              id="bu"
+              className="input"
+              placeholder="VD: ITS-PHX"
+              value={bu}
+              onChange={(e) => setBu(e.target.value.toUpperCase().slice(0, 20))}
+              maxLength={20}
+            />
+            <span className="help">Mã phòng ban / BU của bạn (chữ hoa)</span>
+          </div>
+        </div>
+        <div className="card-ft">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {onCancel && (
+              <button type="button" className="btn ghost sm" onClick={onCancel}>
+                ← Hủy
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span className="text-xs text-muted">{validCount}/3 trường hợp lệ</span>
+            <button
+              type="submit"
+              className={`btn ${allValid && !checking ? '' : 'disabled'}`}
+              disabled={!allValid || checking}
+            >
+              {checking ? (
+                <>
+                  <span className="dots">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  Đang kiểm tra...
+                </>
+              ) : (
+                'Tiếp tục →'
+              )}
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <div className="banner info mt-4">
+        <span className="banner-icon">ⓘ</span>
+        <div>
+          <b>Sau khi đăng ký:</b> Bạn có thể đổi ca tối đa <b>3 lần</b> trước hạn chót. Liên hệ BTC
+          Assessment nếu cần hỗ trợ.
+        </div>
+      </div>
+    </>
   );
 }
+
+// ─── Step 2 · Calendar ────────────────────────────────────────────────────
+
+const ROW_H = 56;
+
+function CalendarStep({
+  step1,
+  slots,
+  selection,
+  setSelection,
+  curSpId,
+  curSkId,
+  deadlinePassed,
+  onBack,
+}: {
+  step1: Step1Data;
+  slots: Slot[];
+  selection: Selection;
+  setSelection: React.Dispatch<React.SetStateAction<Selection>>;
+  curSpId: string | null;
+  curSkId: string | null;
+  deadlinePassed: boolean;
+  onBack: () => void;
+}) {
+  const dates = useMemo(() => uniqueSortedDates(slots), [slots]);
+  const spSel = slots.find((s) => s.slotId === selection.speakingId) ?? null;
+  const skSel = slots.find((s) => s.slotId === selection.skillsId) ?? null;
+
+  const startMins = slots.map((s) => s.startMin);
+  const endMins = slots.map((s) => s.endMin);
+  const firstHour = startMins.length ? Math.floor(Math.min(...startMins) / 60) : 8;
+  const lastHour = endMins.length ? Math.ceil(Math.max(...endMins) / 60) : 18;
+  const hours = Array.from({ length: lastHour - firstHour }, (_, i) => firstHour + i);
+
+  const byDate = useMemo(() => {
+    const m: Record<string, Slot[]> = {};
+    dates.forEach((d) => { m[d] = slots.filter((s) => s.date === d); });
+    return m;
+  }, [slots, dates]);
+
+  function onClickSlot(slot: Slot) {
+    const st = slotSt(slot, spSel, skSel, curSpId, curSkId);
+    if (st === 'full' || st === 'conflict' || deadlinePassed) return;
+    if (slot.type === 'Speaking') {
+      setSelection((sel) => {
+        const newSpId = sel.speakingId === slot.slotId ? null : slot.slotId;
+        // Auto-clear skills if it now conflicts
+        let newSkId = sel.skillsId;
+        if (newSpId && sel.skillsId) {
+          const sp = slots.find((s) => s.slotId === newSpId);
+          const sk = slots.find((s) => s.slotId === sel.skillsId!);
+          if (sp && sk && overlaps(sp, sk)) newSkId = null;
+        }
+        return { speakingId: newSpId, skillsId: newSkId };
+      });
+    } else {
+      setSelection((sel) => ({
+        ...sel,
+        skillsId: sel.skillsId === slot.slotId ? null : slot.slotId,
+      }));
+    }
+  }
+
+  const initials = step1.fullName.trim().slice(0, 2).toUpperCase() || '??';
+
+  return (
+    <>
+      <Stepper current={2} />
+
+      <div className="profile-row">
+        <div className="info">
+          <span className="avatar">{initials}</span>
+          <b>{step1.fullName}</b>
+          <span className="info-sep" />
+          <span>Mã NV: <b>{step1.empCode}</b></span>
+          <span className="info-sep" />
+          <span>BU: <b>{step1.bu}</b></span>
+        </div>
+        <button className="btn-link" onClick={onBack}>← Sửa thông tin</button>
+      </div>
+
+      <div
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 12, marginBottom: 'var(--s-3)' }}
+      >
+        <div>
+          <h1 style={{ fontSize: 'var(--fs-xl)', letterSpacing: '-.02em' }}>Chọn 2 ca thi của bạn</h1>
+          <p className="text-sm text-muted mt-1">
+            Chọn <b style={{ color: 'var(--brand-700)' }}>1 ca Speaking</b> và{' '}
+            <b style={{ color: 'var(--accent-700)' }}>1 ca 3 Skills</b>. Hệ thống sẽ tự khoá ca trùng giờ.
+          </p>
+        </div>
+        <div className="cal-legend">
+          <span className="legend-item">
+            <span
+              className="legend-swatch"
+              style={{ background: 'var(--brand-100)', border: '1px solid var(--brand-300)' }}
+            />
+            Speaking
+          </span>
+          <span className="legend-item">
+            <span
+              className="legend-swatch"
+              style={{ background: 'var(--accent-100)', border: '1px solid var(--accent-300)' }}
+            />
+            3 Skills
+          </span>
+          <span className="legend-item">
+            <span
+              className="legend-swatch"
+              style={{
+                background:
+                  'repeating-linear-gradient(135deg, var(--ink-100) 0 4px, var(--ink-50) 4px 8px)',
+                border: '1px solid var(--ink-200)',
+              }}
+            />
+            Hết
+          </span>
+        </div>
+      </div>
+
+      <div className="cal-wrap">
+        <div className="cal-toolbar">
+          <div className="week-nav">
+            <span className="week-label">{weekRangeLabel(dates)}</span>
+          </div>
+          <div className="text-xs text-muted">
+            {slots.filter((s) => s.remaining > 0).length} ca còn chỗ · {slots.length} ca tổng
+          </div>
+        </div>
+
+        <div
+          className="cal"
+          style={
+            {
+              '--cal-cols': dates.length || 5,
+              gridTemplateColumns: `52px repeat(${dates.length || 5}, 1fr)`,
+            } as React.CSSProperties
+          }
+        >
+          <div className="cal-head gutter" />
+          {dates.map((date) => {
+            const { abbr, label } = dayHeader(date);
+            return (
+              <div key={date} className="cal-head">
+                <div className="day">{abbr}</div>
+                <div className="date">{label}</div>
+              </div>
+            );
+          })}
+
+          {hours.map((h) => (
+            <Fragment key={h}>
+              <div className="cal-time">{String(h).padStart(2, '0')}:00</div>
+              {dates.map((date) => {
+                const blocks = (byDate[date] ?? []).filter(
+                  (s) => Math.floor(s.startMin / 60) === h,
+                );
+                return (
+                  <div key={date} className="cal-cell">
+                    {blocks.map((slot) => {
+                      const st = slotSt(slot, spSel, skSel, curSpId, curSkId);
+                      const topPx = ((slot.startMin - h * 60) / 60) * ROW_H;
+                      const heightPx = ((slot.endMin - slot.startMin) / 60) * ROW_H - 4;
+                      const isSp = slot.type === 'Speaking';
+                      return (
+                        <button
+                          key={slot.slotId}
+                          className={[
+                            'cal-block',
+                            isSp ? 'sp' : 'sk',
+                            st === 'sel' ? 'sel' : '',
+                            st === 'full' ? 'full' : '',
+                            st === 'conflict' ? 'conflict' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          style={{ top: topPx + 2, height: heightPx }}
+                          onClick={() => onClickSlot(slot)}
+                          disabled={st === 'full' || st === 'conflict' || deadlinePassed}
+                          title={
+                            st === 'conflict'
+                              ? 'Trùng với ca đã chọn'
+                              : st === 'full'
+                                ? 'Đã hết chỗ'
+                                : `${minToHHmm(slot.startMin)}–${minToHHmm(slot.endMin)} · ${slot.location} · Còn ${slot.remaining}/${slot.capacity}`
+                          }
+                        >
+                          <div className="b-time">
+                            {minToHHmm(slot.startMin)}–{minToHHmm(slot.endMin)}
+                          </div>
+                          <div className="b-meta">
+                            <span className="b-loc">{slot.location.split(' · ')[0]}</span>
+                            {st === 'conflict' ? (
+                              <span className="b-conflict-tag">⚠ Trùng</span>
+                            ) : st === 'full' ? (
+                              <span className="b-rem">Hết</span>
+                            ) : (
+                              <span className="b-rem">
+                                {slot.remaining}/{slot.capacity}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+
+      <p className="text-xs text-muted mt-3">
+        💡 <b>Mẹo:</b> Click vào block để chọn / bỏ chọn. Block bị mờ + gạch chéo là trùng giờ với
+        ca bạn vừa chọn.
+      </p>
+    </>
+  );
+}
+
+// ─── Confirm Modal ────────────────────────────────────────────────────────
+
+function ConfirmModal({
+  step1,
+  slots,
+  selection,
+  isEditing,
+  onCancel,
+  onConfirm,
+}: {
+  step1: Step1Data;
+  slots: Slot[];
+  selection: Selection;
+  isEditing: boolean;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const sp = slots.find((s) => s.slotId === selection.speakingId);
+  const sk = slots.find((s) => s.slotId === selection.skillsId);
+
+  async function handleConfirm() {
+    setSubmitting(true);
+    await onConfirm();
+    // If onConfirm redirects screen, this component unmounts — setSubmitting(false) is no-op
+    setSubmitting(false);
+  }
+
+  return (
+    <Modal
+      title={isEditing ? 'Xác nhận đổi ca' : 'Xác nhận đăng ký'}
+      subtitle="Vui lòng kiểm tra kỹ trước khi gửi. Sau đăng ký bạn vẫn có thể đổi ca."
+      onClose={onCancel}
+      footer={
+        <>
+          <button className="btn ghost" onClick={onCancel} disabled={submitting}>
+            ← Quay lại sửa
+          </button>
+          <button
+            className={`btn ${submitting ? 'disabled' : ''}`}
+            onClick={handleConfirm}
+            disabled={submitting}
+          >
+            {submitting ? (
+              <>
+                <span className="dots">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                Đang gửi...
+              </>
+            ) : isEditing ? (
+              'Xác nhận đổi ca'
+            ) : (
+              'Xác nhận đăng ký'
+            )}
+          </button>
+        </>
+      }
+    >
+      <div className="sec-title">
+        <span className="dot">👤</span>Học viên
+      </div>
+      <div
+        style={{
+          background: 'var(--ink-25)',
+          padding: 'var(--s-3) var(--s-4)',
+          borderRadius: 'var(--r-md)',
+          marginBottom: 'var(--s-4)',
+        }}
+      >
+        <div style={{ fontWeight: 600, color: 'var(--ink-900)' }}>{step1.fullName}</div>
+        <div className="text-sm text-muted mt-1">
+          Mã NV: <b style={{ color: 'var(--ink-800)' }}>{step1.empCode}</b> · BU:{' '}
+          <b style={{ color: 'var(--ink-800)' }}>{step1.bu}</b>
+        </div>
+      </div>
+
+      <div className="sec-title">
+        <span className="dot accent">📅</span>2 ca thi đã chọn
+      </div>
+      <div className="col mb-4" style={{ gap: 'var(--s-2)' }}>
+        {sp && <SlotCard slot={sp} index={1} />}
+        {sk && <SlotCard slot={sk} index={2} />}
+      </div>
+
+      <div className="banner warn">
+        <span className="banner-icon">⚠</span>
+        <div>
+          <b>Sau khi đăng ký</b> bạn còn <b>3 lần đổi ca</b>. Hết quota sẽ phải liên hệ BTC.
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Success Screen ───────────────────────────────────────────────────────
+
+function SuccessScreen({
+  email,
+  step1,
+  slots,
+  selection,
+  maxChanges,
+  onViewDetail,
+}: {
+  email: string;
+  step1: Step1Data;
+  slots: Slot[];
+  selection: Selection;
+  maxChanges: number;
+  onViewDetail: () => void;
+}) {
+  const sp = slots.find((s) => s.slotId === selection.speakingId);
+  const sk = slots.find((s) => s.slotId === selection.skillsId);
+  const ordered = ([sp, sk].filter(Boolean) as Slot[]).sort((a, b) =>
+    a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.startMin - b.startMin,
+  );
+  const first = ordered[0];
+  const countdown = first ? daysUntil(first.date) : 0;
+
+  return (
+    <>
+      <div className="success-hero">
+        <div className="success-check">✓</div>
+        <h1 className="success-title">Đăng ký thành công!</h1>
+        <p className="success-sub">
+          {step1.fullName} · {step1.empCode}
+        </p>
+      </div>
+
+      {first && (
+        <div className="countdown">
+          <div className="meta">
+            <div className="lbl">Còn đến ca thi gần nhất</div>
+            <div className="when">
+              {first.type === 'Speaking' ? 'Speaking' : '3 Skills'} ·{' '}
+              {dayHeader(first.date).label} · {minToHHmm(first.startMin)}
+            </div>
+          </div>
+          <div className="big">
+            <div className="n">{countdown}</div>
+            <div className="u">ngày</div>
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-hd">
+          <div className="card-title">Lịch thi của bạn</div>
+          <div className="card-sub">
+            Email xác nhận đã gửi đến <b>{email}</b>.
+          </div>
+        </div>
+        <div className="card-bd">
+          <div className="col" style={{ gap: 'var(--s-3)' }}>
+            {ordered.map((slot, i) => (
+              <SlotCard key={slot.slotId} slot={slot} index={i + 1} />
+            ))}
+          </div>
+        </div>
+        <div className="card-ft">
+          <span>
+            Còn <b style={{ color: 'var(--ink-900)' }}>{maxChanges}/{maxChanges}</b> lần đổi ca
+          </span>
+          <button className="btn ghost sm" onClick={onViewDetail}>
+            Xem chi tiết →
+          </button>
+        </div>
+      </div>
+
+      <div className="banner info mt-4">
+        <span className="banner-icon">📨</span>
+        <div>
+          <b>Lưu ý:</b> Mang theo CCCD/Thẻ NV khi tới phòng thi. Reminder sẽ gửi trước ngày thi 7
+          / 3 / 1 ngày.
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Booking Display ──────────────────────────────────────────────────────
 
 function BookingDisplay({
   booking,
@@ -228,20 +1010,29 @@ function BookingDisplay({
   onError: (msg: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const sp = slots.find((s) => s.slotId === booking.speakingSlotId);
   const sk = slots.find((s) => s.slotId === booking.skillsSlotId);
+  const ordered = ([sp, sk].filter(Boolean) as Slot[]).sort((a, b) =>
+    a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.startMin - b.startMin,
+  );
+  const first = ordered[0];
+  const countdown = first ? daysUntil(first.date) : 0;
+  const changesLeft = Math.max(0, maxChanges - booking.changeCount);
 
-  const fallback = (id: string | null) =>
-    id ? `${id} (slot đã bị xóa — liên hệ BTC)` : '—';
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
 
-  const formatSlotDisplay = (slot: Slot | undefined, fallbackId: string | null) => {
-    if (!slot) return fallback(fallbackId);
-    const loc = slot.location ? ` · ${slot.location}` : '';
-    return `${slot.session ? `[${slot.session}] ` : ''}${formatDateVi(slot.date)} · ${minToHHmm(slot.startMin)}–${minToHHmm(slot.endMin)}${loc}`;
-  };
-
-  const handleCancel = async () => {
-    if (!confirm('Hủy đăng ký 2 ca thi của bạn? Bạn có thể đăng ký lại trước hạn.')) return;
+  async function handleCancel() {
+    if (!window.confirm('Hủy đăng ký 2 ca thi của bạn? Bạn có thể đăng ký lại trước hạn.')) return;
+    setMenuOpen(false);
     setBusy(true);
     try {
       const res = await cancel();
@@ -253,341 +1044,211 @@ function BookingDisplay({
     } finally {
       setBusy(false);
     }
-  };
-
-  return (
-    <div className="booking-summary">
-      <h2>✓ Đã đăng ký</h2>
-      <dl>
-        <dt>Mã NV</dt>
-        <dd>{booking.empCode}</dd>
-        <dt>Họ và tên</dt>
-        <dd>{booking.fullName}</dd>
-        <dt>BU</dt>
-        <dd>{booking.bu}</dd>
-        <dt>Ca Speaking</dt>
-        <dd className={sp ? '' : 'orphan'}>{formatSlotDisplay(sp, booking.speakingSlotId)}</dd>
-        <dt>Ca 3 Skills</dt>
-        <dd className={sk ? '' : 'orphan'}>{formatSlotDisplay(sk, booking.skillsSlotId)}</dd>
-        {booking.createdAt && (
-          <>
-            <dt>Đăng ký lúc</dt>
-            <dd>{new Date(booking.createdAt).toLocaleString('vi-VN')}</dd>
-          </>
-        )}
-        {booking.updatedAt && booking.updatedAt !== booking.createdAt && (
-          <>
-            <dt>Cập nhật lúc</dt>
-            <dd>{new Date(booking.updatedAt).toLocaleString('vi-VN')}</dd>
-          </>
-        )}
-      </dl>
-      {booking.changeCount > 0 && (
-        <div style={{ marginTop: 8, fontSize: '0.85rem', color: 'var(--txt-2)' }}>
-          Đã đổi ca: {booking.changeCount} / {maxChanges} lần
-          {booking.changeCount >= maxChanges && ' (đã hết lượt đổi)'}
-        </div>
-      )}
-      {!deadlinePassed && (
-        <div className="actions" style={{ marginTop: 16 }}>
-          <button
-            type="button"
-            className="ghost"
-            onClick={onEdit}
-            disabled={busy || booking.changeCount >= maxChanges}
-            title={booking.changeCount >= maxChanges ? 'Bạn đã hết lượt đổi ca' : undefined}
-          >
-            Đổi ca
-          </button>
-          <button type="button" className="danger" onClick={handleCancel} disabled={busy}>
-            {busy ? 'Đang hủy…' : 'Hủy đăng ký'}
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BookingForm({
-  data,
-  onBooked,
-  onError,
-  onCancelEdit,
-}: {
-  data: InitResult;
-  onBooked: (state: InitResult, emailSent: boolean) => void;
-  onError: (msg: string, state?: InitResult) => void;
-  onCancelEdit?: () => void;
-}) {
-  const cur = data.myBooking;
-  const [empCode, setEmpCode] = useState(cur?.empCode ?? '');
-  const [fullName, setFullName] = useState(cur?.fullName ?? '');
-  const [bu, setBu] = useState(cur?.bu ?? '');
-  const [speakingId, setSpeakingId] = useState<string | null>(cur?.speakingSlotId ?? null);
-  const [skillsId, setSkillsId] = useState<string | null>(cur?.skillsSlotId ?? null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const slots = data.slots;
-  const speakingSlots = useMemo(
-    () => slots.filter((s) => s.type === 'Speaking').sort(sortByDateStart),
-    [slots],
-  );
-  const chosenSpeaking = speakingSlots.find((s) => s.slotId === speakingId) ?? null;
-
-  const skillsSlots = useMemo(
-    () => slots.filter((s) => s.type === '3 Skills').sort(sortByDateStart),
-    [slots],
-  );
-
-  const canSubmit =
-    empCode.trim().length >= 3 &&
-    fullName.trim().length >= 2 &&
-    bu.trim().length >= 2 &&
-    speakingId && skillsId && !submitting;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!speakingId || !skillsId) return;
-
-    // Confirm dialog
-    const sp = data.slots.find((s) => s.slotId === speakingId);
-    const sk = data.slots.find((s) => s.slotId === skillsId);
-    if (cur) {
-      const curSp = data.slots.find((s) => s.slotId === cur.speakingSlotId);
-      const curSk = data.slots.find((s) => s.slotId === cur.skillsSlotId);
-      const changed = speakingId !== cur.speakingSlotId || skillsId !== cur.skillsSlotId;
-      if (changed) {
-        const spLabel = sp ? `${formatDateVi(sp.date)} ${minToHHmm(sp.startMin)}–${minToHHmm(sp.endMin)}${sp.location ? ' (' + sp.location + ')' : ''}` : speakingId;
-        const skLabel = sk ? `${formatDateVi(sk.date)} ${minToHHmm(sk.startMin)}–${minToHHmm(sk.endMin)}${sk.location ? ' (' + sk.location + ')' : ''}` : skillsId;
-        const curSpLabel = curSp ? `${formatDateVi(curSp.date)} ${minToHHmm(curSp.startMin)}–${minToHHmm(curSp.endMin)}` : cur.speakingSlotId;
-        const curSkLabel = curSk ? `${formatDateVi(curSk.date)} ${minToHHmm(curSk.startMin)}–${minToHHmm(curSk.endMin)}` : cur.skillsSlotId;
-        const msg =
-          'Bạn đang thay đổi ca thi:\n' +
-          '  Speaking: ' + curSpLabel + '  →  ' + spLabel + '\n' +
-          '  3 Skills: ' + curSkLabel + '  →  ' + skLabel + '\n\n' +
-          'Xác nhận thay đổi?';
-        if (!window.confirm(msg)) return;
-      }
-    } else {
-      // New booking — show summary confirm
-      const spLabel = sp ? `${formatDateVi(sp.date)} ${minToHHmm(sp.startMin)}–${minToHHmm(sp.endMin)}${sp.location ? ' (' + sp.location + ')' : ''}` : speakingId;
-      const skLabel = sk ? `${formatDateVi(sk.date)} ${minToHHmm(sk.startMin)}–${minToHHmm(sk.endMin)}${sk.location ? ' (' + sk.location + ')' : ''}` : skillsId;
-      const msg =
-        'Xác nhận đăng ký:\n' +
-        '  Họ tên: ' + fullName.trim() + '\n' +
-        '  Mã NV: ' + empCode.trim() + '\n' +
-        '  BU: ' + bu.trim() + '\n\n' +
-        '  Speaking: ' + spLabel + '\n' +
-        '  3 Skills: ' + skLabel + '\n\n' +
-        'Bạn có thể đổi ca hoặc hủy trước hạn đăng ký.';
-      if (!window.confirm(msg)) return;
-    }
-
-    setSubmitting(true);
-    try {
-      const res = await book({
-        empCode: empCode.trim(),
-        fullName: fullName.trim(),
-        bu: bu.trim(),
-        speakingSlotId: speakingId,
-        skillsSlotId: skillsId,
-      });
-      if (!res.ok) {
-        onError(res.error || 'Đăng ký thất bại.', res.state);
-        if (res.state) {
-          // Slot có thể đã hết chỗ → reset selection nếu không còn hợp lệ
-          const fresh = res.state.slots.find((s) => s.slotId === speakingId);
-          if (fresh && fresh.remaining <= 0) setSpeakingId(null);
-          const fresh2 = res.state.slots.find((s) => s.slotId === skillsId);
-          if (fresh2 && fresh2.remaining <= 0) setSkillsId(null);
-        }
-      } else if (res.state) {
-        onBooked(res.state, !!res.emailSent);
-      } else {
-        onError('Đăng ký thành công nhưng không nhận được state. Tải lại trang.');
-      }
-    } catch (e) {
-      onError((e as Error).message || 'Đăng ký thất bại.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit}>
-      <section className="card">
-        <h2>
-          <span className="step">1</span> Thông tin học viên
-        </h2>
-        <div className="row">
-          <label className="field">
-            <span>Mã NV</span>
-            <input
-              value={empCode}
-              onChange={(e) => setEmpCode(e.target.value)}
-              placeholder="VD: CLG12345"
-              required
-              maxLength={20}
-            />
-          </label>
-          <label className="field">
-            <span>Họ và tên</span>
-            <input
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="VD: Nguyễn Văn A"
-              required
-              maxLength={100}
-            />
-          </label>
-          <label className="field">
-            <span>BU</span>
-            <input
-              value={bu}
-              onChange={(e) => setBu(e.target.value)}
-              placeholder="VD: ITS-PHX"
-              required
-              maxLength={50}
-            />
-          </label>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>
-          <span className="step">2</span> Chọn ca Speaking
-        </h2>
-        <SlotGrid
-          slots={speakingSlots}
-          selectedId={speakingId}
-          onSelect={(id) => {
-            setSpeakingId(id);
-            if (skillsId) {
-              const sk = slots.find((s) => s.slotId === skillsId);
-              const sp = slots.find((s) => s.slotId === id);
-              if (sk && sp && overlaps(sp, sk)) setSkillsId(null);
-            }
-          }}
-          currentBookingId={cur?.speakingSlotId ?? null}
-        />
-      </section>
-
-      <section className="card">
-        <h2>
-          <span className="step">3</span> Chọn ca 3 Skills
-        </h2>
-        {!chosenSpeaking && (
-          <div className="slot-empty">Vui lòng chọn ca Speaking trước.</div>
-        )}
-        {chosenSpeaking && (
-          <SlotGrid
-            slots={skillsSlots}
-            selectedId={skillsId}
-            onSelect={setSkillsId}
-            disabledIf={(s) => overlaps(s, chosenSpeaking)}
-            disabledReason="Trùng giờ"
-            currentBookingId={cur?.skillsSlotId ?? null}
-          />
-        )}
-      </section>
-
-      <div className="actions">
-        <button className="primary" type="submit" disabled={!canSubmit}>
-          {submitting ? (
-            <>
-              <span className="spinner" /> Đang gửi…
-            </>
-          ) : cur ? (
-            'Cập nhật đăng ký'
-          ) : (
-            'Đăng ký'
-          )}
-        </button>
-        {onCancelEdit && (
-          <button type="button" className="ghost" onClick={onCancelEdit} disabled={submitting}>
-            Hủy thay đổi
-          </button>
-        )}
-      </div>
-    </form>
-  );
-}
-
-function SlotGrid({
-  slots,
-  selectedId,
-  onSelect,
-  disabledIf,
-  disabledReason,
-  currentBookingId,
-}: {
-  slots: Slot[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  disabledIf?: (s: Slot) => boolean;
-  disabledReason?: string;
-  currentBookingId?: string | null;
-}) {
-  if (slots.length === 0) {
-    return <div className="slot-empty">Chưa có ca nào.</div>;
   }
+
   return (
-    <div className="slot-grid">
-      {slots.map((s) => {
-        const isCurrent = s.slotId === currentBookingId;
-        const fullOrConflict = (s.remaining <= 0 && !isCurrent) || (disabledIf?.(s) ?? false);
-        const isSelected = s.slotId === selectedId;
-        const conflictReason = disabledIf?.(s) ? disabledReason : null;
-        const remainingClass =
-          s.remaining <= 0
-            ? 'danger'
-            : s.remaining <= Math.max(2, Math.floor(s.capacity * 0.25))
-              ? 'warn'
-              : '';
-        return (
-          <label
-            key={s.slotId}
-            className={`slot ${isSelected ? 'selected' : ''} ${fullOrConflict ? 'disabled' : ''}`}
+    <>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          flexWrap: 'wrap',
+          gap: 8,
+          marginBottom: 'var(--s-4)',
+        }}
+      >
+        <h1 style={{ fontSize: 'var(--fs-xl)' }}>Lịch thi của bạn</h1>
+        <span className="pill success">✓ Đã đăng ký</span>
+      </div>
+
+      {first && (
+        <div className="countdown mb-4">
+          <div className="meta">
+            <div className="lbl">Còn đến ca thi gần nhất</div>
+            <div className="when">
+              {first.type === 'Speaking' ? 'Speaking' : '3 Skills'} ·{' '}
+              {dayHeader(first.date).label} · {minToHHmm(first.startMin)}
+            </div>
+          </div>
+          <div className="big">
+            <div className="n">{countdown}</div>
+            <div className="u">ngày</div>
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-hd">
+          <div className="sec-title" style={{ marginBottom: 'var(--s-1)' }}>
+            <span className="dot">👤</span>Học viên
+          </div>
+          <div className="text-sm">
+            <b>{booking.fullName}</b> · {booking.empCode} · {booking.bu}
+          </div>
+        </div>
+        <div className="card-bd">
+          <div className="sec-title">
+            <span className="dot accent">📅</span>2 ca thi
+          </div>
+          <div className="col" style={{ gap: 'var(--s-3)' }}>
+            {ordered.map((slot, i) => (
+              <SlotCard key={slot.slotId} slot={slot} index={i + 1} />
+            ))}
+            {!sp && booking.speakingSlotId && (
+              <div className="bk-slot">
+                <div className="num" style={{ background: 'var(--danger-50)', color: 'var(--danger-600)' }}>!</div>
+                <div className="body">
+                  <div className="type-lbl" style={{ color: 'var(--danger-600)' }}>Speaking</div>
+                  <div className="when" style={{ color: 'var(--danger-600)', fontSize: 'var(--fs-sm)' }}>
+                    {booking.speakingSlotId} — slot đã bị xóa, liên hệ BTC
+                  </div>
+                </div>
+              </div>
+            )}
+            {!sk && booking.skillsSlotId && (
+              <div className="bk-slot">
+                <div className="num" style={{ background: 'var(--danger-50)', color: 'var(--danger-600)' }}>!</div>
+                <div className="body">
+                  <div className="type-lbl" style={{ color: 'var(--danger-600)' }}>3 Skills</div>
+                  <div className="when" style={{ color: 'var(--danger-600)', fontSize: 'var(--fs-sm)' }}>
+                    {booking.skillsSlotId} — slot đã bị xóa, liên hệ BTC
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="card-ft">
+          {booking.createdAt && (
+            <span>
+              Đăng ký:{' '}
+              <b style={{ color: 'var(--ink-700)' }}>
+                {new Date(booking.createdAt).toLocaleString('vi-VN')}
+              </b>
+            </span>
+          )}
+          <span>
+            Còn <b style={{ color: 'var(--ink-900)' }}>{changesLeft}/{maxChanges}</b> lần đổi ca
+          </span>
+        </div>
+      </div>
+
+      {!deadlinePassed && (
+        <div className="bk-actions">
+          <button
+            className={`btn ${changesLeft <= 0 ? 'disabled' : ''}`}
+            onClick={onEdit}
+            disabled={busy || changesLeft <= 0}
+            title={changesLeft <= 0 ? 'Bạn đã hết lượt đổi ca' : undefined}
           >
-            <input
-              type="radio"
-              name={`slot-${slots[0].type}`}
-              checked={isSelected}
-              disabled={fullOrConflict}
-              onChange={() => onSelect(s.slotId)}
-            />
-            <div className="slot-date">
-              {formatDateVi(s.date)} · {minToHHmm(s.startMin)}–{minToHHmm(s.endMin)}
-              {s.session && <span className="slot-badge">{s.session}</span>}
-            </div>
-            {s.location && <div className="slot-time">📍 {s.location}</div>}
-            <div className={`slot-remaining ${remainingClass}`}>
-              {conflictReason
-                ? conflictReason
-                : s.remaining <= 0
-                  ? isCurrent
-                    ? 'Ca hiện tại của bạn'
-                    : 'Hết chỗ'
-                  : `Còn ${s.remaining}/${s.capacity} chỗ${isCurrent ? ' · đang chọn' : ''}`}
-            </div>
-          </label>
-        );
-      })}
+            ↻ Đổi ca thi
+          </button>
+          <div className="menu-wrap" ref={menuRef}>
+            <button
+              className="btn ghost"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-haspopup="true"
+              aria-expanded={menuOpen}
+              disabled={busy}
+            >
+              ⋮ Tùy chọn
+            </button>
+            {menuOpen && (
+              <div className="menu" role="menu">
+                <button
+                  className="menu-item danger"
+                  role="menuitem"
+                  onClick={handleCancel}
+                  disabled={busy}
+                >
+                  🗑 Hủy đăng ký
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Slot Card ────────────────────────────────────────────────────────────
+
+function SlotCard({ slot, index }: { slot: Slot; index: number }) {
+  const isSp = slot.type === 'Speaking';
+  const { label: dateLabel } = dayHeader(slot.date);
+  return (
+    <div className={`bk-slot ${isSp ? '' : 'sk'}`}>
+      <div className="num">{index}</div>
+      <div className="body">
+        <div className="type-lbl">{isSp ? 'Speaking · 60 phút' : '3 Skills · 120 phút'}</div>
+        <div className="when">
+          {dateLabel} · {minToHHmm(slot.startMin)}–{minToHHmm(slot.endMin)}
+        </div>
+        {slot.location && <div className="where">📍 {slot.location}</div>}
+      </div>
     </div>
   );
 }
 
-function sortByDateStart(a: Slot, b: Slot): number {
-  if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-  return a.startMin - b.startMin;
+// ─── Modal ────────────────────────────────────────────────────────────────
+
+function Modal({
+  title,
+  subtitle,
+  onClose,
+  children,
+  footer,
+  maxWidth = 480,
+}: {
+  title?: string;
+  subtitle?: string;
+  onClose?: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  maxWidth?: number;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && onClose) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" style={{ maxWidth }} onClick={(e) => e.stopPropagation()}>
+        {(title || subtitle) && (
+          <div className="modal-hd">
+            {title && <div className="modal-title">{title}</div>}
+            {subtitle && <div className="modal-sub">{subtitle}</div>}
+          </div>
+        )}
+        <div className="modal-bd">{children}</div>
+        {footer && <div className="modal-ft">{footer}</div>}
+      </div>
+    </div>
+  );
 }
 
-// ── ErrorBoundary ────────────────────────────────────────────────────────
+// ─── Toast Stack ──────────────────────────────────────────────────────────
 
-class ErrorBoundary extends Component<
-  { children: ReactNode },
-  { error: Error | null }
-> {
+function ToastStack({ toasts }: { toasts: ToastItem[] }) {
+  if (!toasts.length) return null;
+  return (
+    <div className="toast-stack">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.kind}`}>
+          {t.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Error Boundary ───────────────────────────────────────────────────────
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
 
   static getDerivedStateFromError(error: Error) {
@@ -603,9 +1264,10 @@ class ErrorBoundary extends Component<
       return (
         <div className="app">
           <div className="error-screen">
+            <div className="error-icon">💥</div>
             <h2>Ứng dụng gặp lỗi</h2>
             <p>{this.state.error.message || 'Lỗi không xác định.'}</p>
-            <button className="primary" onClick={() => window.location.reload()}>
+            <button className="btn" onClick={() => window.location.reload()}>
               Tải lại
             </button>
           </div>

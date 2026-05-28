@@ -12,6 +12,7 @@
     "deploy": "npm run push && cd gas && clasp deploy --deploymentId AKfycbw8krYHgIgLm1YT10OB40ENhrcJH471rFvTf0lKBR2LoMuaDSjnrOEfV20Rw4FsxUU --description \"$(date '+%Y-%m-%d %H:%M')\""
   },
   "dependencies": {
+    "firebase": "^12.13.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
