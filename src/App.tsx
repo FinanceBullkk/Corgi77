@@ -399,6 +399,7 @@ function AppInner() {
             slots={data.slots}
             selection={selection}
             isEditing={isEditing}
+            maxChanges={data.maxChanges}
             onCancel={() => setScreen('step2')}
             onConfirm={handleConfirmSubmit}
           />
@@ -460,6 +461,7 @@ function AppInner() {
             slots={data.slots}
             selection={selection}
             maxChanges={data.maxChanges}
+            changeCount={data.myBooking?.changeCount ?? 0}
             onViewDetail={() => {
               if (data.myBooking) {
                 setSelection({ speakingId: data.myBooking.speakingSlotId, skillsId: data.myBooking.skillsSlotId });
@@ -857,7 +859,7 @@ function CalendarStep({
           active={activeType === '3 Skills'}
           picked={!!skSel}
           label="3 Skills"
-          duration="120 phút"
+          duration="150 phút"
           statusText={skSel ? `${dayHeader(skSel.date).label} · ${minToHHmm(skSel.startMin)}–${minToHHmm(skSel.endMin)}` : 'Click chọn ca'}
           onClick={() => setActiveType('3 Skills')}
         />
@@ -1045,6 +1047,7 @@ function ConfirmModal({
   slots,
   selection,
   isEditing,
+  maxChanges,
   onCancel,
   onConfirm,
 }: {
@@ -1052,6 +1055,7 @@ function ConfirmModal({
   slots: Slot[];
   selection: Selection;
   isEditing: boolean;
+  maxChanges: number;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -1128,7 +1132,7 @@ function ConfirmModal({
       <div className="banner warn">
         <span className="banner-icon">⚠</span>
         <div>
-          <b>Sau khi đăng ký</b> bạn còn <b>3 lần đổi ca</b>. Hết quota sẽ phải liên hệ BTC.
+          <b>Sau khi đăng ký</b> bạn còn <b>{maxChanges} lần đổi ca</b>. Hết quota sẽ phải liên hệ BTC.
         </div>
       </div>
     </Modal>
@@ -1143,6 +1147,7 @@ function SuccessScreen({
   slots,
   selection,
   maxChanges,
+  changeCount,
   onViewDetail,
 }: {
   email: string;
@@ -1150,6 +1155,7 @@ function SuccessScreen({
   slots: Slot[];
   selection: Selection;
   maxChanges: number;
+  changeCount: number;
   onViewDetail: () => void;
 }) {
   const sp = slots.find((s) => s.slotId === selection.speakingId);
@@ -1159,6 +1165,7 @@ function SuccessScreen({
   );
   const first = ordered[0];
   const countdown = first ? daysUntil(first.date) : 0;
+  const changesLeft = Math.max(0, maxChanges - changeCount);
 
   return (
     <>
@@ -1202,7 +1209,7 @@ function SuccessScreen({
         </div>
         <div className="card-ft">
           <span>
-            Còn <b style={{ color: 'var(--ink-900)' }}>{maxChanges}/{maxChanges}</b> lần đổi ca
+            Còn <b style={{ color: 'var(--ink-900)' }}>{changesLeft}/{maxChanges}</b> lần đổi ca
           </span>
           <button className="btn ghost sm" onClick={onViewDetail}>
             Xem chi tiết →
@@ -1415,7 +1422,7 @@ function SlotCard({ slot, index }: { slot: Slot; index: number }) {
     <div className={`bk-slot ${isSp ? '' : 'sk'}`}>
       <div className="num">{index}</div>
       <div className="body">
-        <div className="type-lbl">{isSp ? 'Speaking · 60 phút' : '3 Skills · 120 phút'}</div>
+        <div className="type-lbl">{isSp ? 'Speaking · 60 phút' : '3 Skills · 150 phút'}</div>
         <div className="when">
           {dateLabel} · {minToHHmm(slot.startMin)}–{minToHHmm(slot.endMin)}
         </div>
