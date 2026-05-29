@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mock firebase module BEFORE importing admin.ts ──
 vi.mock('../lib/firebase', () => ({

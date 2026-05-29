@@ -47,9 +47,8 @@ import {
   listIneligibility,
   upsertIneligibility,
   deleteIneligibility,
-  downloadRegistrationsCsv,
 } from '../lib/adminDb';
-import { mockDocSnap, mockQuerySnap, TEST_SLOT_SPEAKING, TEST_SLOT_SKILLS, TEST_CONFIG, TEST_REGISTRATION } from './mocks/firebase';
+import { mockDocSnap, mockQuerySnap, TEST_SLOT_SPEAKING, TEST_SLOT_SKILLS, TEST_REGISTRATION } from './mocks/firebase';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UC-AD01: listSlots() — Load all slots sorted by date+startMin

