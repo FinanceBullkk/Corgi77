@@ -594,6 +594,8 @@ function Stepper({ current }: { current: number }) {
   );
 }
 
+const BU_LIST = ['BSG', 'CHORUS', 'LBU', 'MOC', 'ONC', 'POC', 'TBU'];
+
 // ─── Step 1 · Info Form ───────────────────────────────────────────────────
 
 function Step1Form({
@@ -613,7 +615,7 @@ function Step1Form({
 
   const empValid = /^\d{6}$/.test(empCode);
   const nameValid = fullName.trim().length >= 2;
-  const buValid = bu.trim().length >= 2;
+  const buValid = BU_LIST.includes(bu);
   const allValid = empValid && nameValid && buValid;
   const validCount = [empValid, nameValid, buValid].filter(Boolean).length;
 
@@ -630,7 +632,7 @@ function Step1Form({
         setBlockErr(reason);
         return;
       }
-      onContinue({ empCode, fullName: fullName.trim(), bu: bu.trim().toUpperCase() });
+      onContinue({ empCode, fullName: fullName.trim(), bu });
     } finally {
       setChecking(false);
     }
@@ -685,15 +687,15 @@ function Step1Form({
             <label className="label" htmlFor="bu">
               Business Unit (BU) <span className="req">*</span>
             </label>
-            <input
+            <select
               id="bu"
               className="input"
-              placeholder="VD: ITS-PHX"
               value={bu}
-              onChange={(e) => setBu(e.target.value.toUpperCase().slice(0, 20))}
-              maxLength={20}
-            />
-            <span className="help">Mã phòng ban / BU của bạn (chữ hoa)</span>
+              onChange={(e) => setBu(e.target.value)}
+            >
+              <option value="">— Chọn BU —</option>
+              {BU_LIST.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
           </div>
 
           {blockErr && (
