@@ -4,8 +4,6 @@ import {
   doc,
   getDoc,
   getDocs,
-  limit,
-  query,
   runTransaction,
   Timestamp,
 } from 'firebase/firestore';
@@ -19,6 +17,22 @@ function minToHHmm(min: number) {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** Escape HTML entities to prevent XSS when interpolating user input into HTML emails. */
+function escHtml(s: string): string {
+  // Split entity strings to prevent auto-formatter from converting them back to literal chars
+  const amp = '&' + 'amp;';
+  const lt = '&' + 'lt;';
+  const gt = '&' + 'gt;';
+  const quot = '&' + 'quot;';
+  const apos = '&' + '#39;';
+  return s
+    .replace(/&/g, amp)
+    .replace(/</g, lt)
+    .replace(/>/g, gt)
+    .replace(/"/g, quot)
+    .replace(/'/g, apos);
 }
 
 function slotFromDoc(id: string, data: Record<string, any>): Slot {
@@ -112,18 +126,16 @@ export async function checkIneligibility(empCode: string): Promise<string | null
         : 'Bạn không đủ điều kiện đăng ký kỳ thi này. Vui lòng liên hệ Ban tổ chức.';
     }
 
-    // 2. Eligibility check: /eligibility (config-gated, backward-compatible)
-    //    If requireEligibility=true but /eligibility collection is empty → allow all
+    // 2. Eligibility check: /eligibility (config-gated)
+    //    When requireEligibility=true, the specific /eligibility/{empCode} doc
+    //    must exist. We use a single getDoc (requires 'get' permission only)
+    //    instead of a collection scan (which would require 'list' permission
+    //    and expose the full allowlist to any signed-in user).
     const cfgSnap = await getDoc(doc(db, 'config', 'main'));
     if (cfgSnap.exists() && cfgSnap.data().requireEligibility === true) {
-      const eligCol = collection(db, 'eligibility');
-      const anyDoc = await getDocs(query(eligCol, limit(1)));
-      if (!anyDoc.empty) {
-        // Collection has data → enforce eligibility per user
-        const eligDoc = await getDoc(doc(db, 'eligibility', code));
-        if (!eligDoc.exists()) {
-          return 'Bạn không nằm trong danh sách đủ điều kiện đăng ký. Vui lòng liên hệ BTC.';
-        }
+      const eligDoc = await getDoc(doc(db, 'eligibility', code));
+      if (!eligDoc.exists()) {
+        return 'Bạn không nằm trong danh sách đủ điều kiện đăng ký. Vui lòng liên hệ BTC.';
       }
     }
 
@@ -148,7 +160,7 @@ async function sendConfirmationEmail(
   try {
     const fmtSlot = (s: Slot) => {
       const [y, mo, d] = s.date.split('-');
-      return `${d}/${mo}/${y} · ${minToHHmm(s.startMin)}–${minToHHmm(s.endMin)}${s.location ? ' · ' + s.location : ''}`;
+      return `${d}/${mo}/${y} · ${minToHHmm(s.startMin)}–${minToHHmm(s.endMin)}${s.location ? ' · ' + escHtml(s.location) : ''}`;
     };
     const verb = isUpdate ? 'cập nhật' : 'đăng ký';
     await addDoc(collection(db, 'mail'), {
@@ -156,7 +168,7 @@ async function sendConfirmationEmail(
       message: {
         subject: `[Assessment Q2 2026] Xác nhận ${verb} ca thi`,
         html: `
-          <p>Xin chào <b>${fullName}</b>,</p>
+          <p>Xin chào <b>${escHtml(fullName)}</b>,</p>
           <p>Bạn đã ${verb} thành công 2 ca thi Assessment Q2 2026:</p>
           <ul>
             <li><b>Speaking:</b> ${fmtSlot(sp)}</li>

@@ -252,3 +252,68 @@ Sheet `Config` → `email_confirm` → `TRUE` / `FALSE`.
 | Đổi React UI mà link cũ chưa cập nhật | Sau `clasp deploy`, deployment cũ vẫn dùng version cũ. Mở **Manage deployments → Edit → Version: New version**. |
 | AuditLog trống | Sheet `AuditLog` chưa được tạo hoặc header bị sai. Import lại từ `sheet-templates/AuditLog.csv`. |
 | `adminStats` / `adminMissing` báo lỗi | Chưa tạo sheet `Eligibility` hoặc `AuditLog`. Import CSV mẫu. |
+
+---
+
+## G. Admin Setup (Firebase / Firestore)
+
+Hệ thống có 2 mode chạy song song: **GAS** (legacy, dùng Google Sheet) và **Firebase** (mới, dùng Firestore). Phần này hướng dẫn cấu hình cho **Firebase mode**.
+
+### G.1. Cấu hình Admin Emails
+
+Admin được xác định bởi email trong Firestore tại `/config/main`.
+
+Trường `adminEmails` là mảng email strings:
+
+```
+/config/main → { adminEmails: ["admin1@company.com", "admin2@company.com"] }
+```
+
+Nếu Firestore config không khả dụng, app fallback về danh sách hardcode trong `src/lib/admin.ts`.
+
+> **Lưu ý**: Trong `App.tsx`, `refreshAdminCache()` được gọi và **await** trước `isAdmin()` để đảm bảo luôn lấy config mới nhất từ Firestore, tránh dùng stale data.
+
+### G.2. Bật Eligibility Checking (tuỳ chọn)
+
+Để giới hạn chỉ cho phép user cụ thể được đăng ký:
+
+1. Tạo collection `/eligibility` trong Firestore
+2. Thêm document cho mỗi user hợp lệ: doc ID = empCode (6 chữ số), fields: `{ empCode, fullName, bu?, email? }`
+3. Set `/config/main.requireEligibility = true`
+
+> ⚠️ **Quan trọng**: Nếu `requireEligibility = true` nhưng **chưa có document nào** trong `/eligibility`, hệ thống sẽ **vẫn cho phép tất cả** user đăng ký (backward-compatible). Khi collection có ít nhất 1 document, chỉ user trong danh sách mới được book.
+
+> **Bảo mật**: Firestore rules cho phép `get` (đọc 1 doc theo empCode) với mọi user đã đăng nhập, nhưng `list` (liệt kê toàn bộ collection) chỉ dành cho admin. Điều này ngăn user scraping danh sách eligibility.
+
+### G.3. Blocklist / Ineligibility (chặn user)
+
+Để chặn user cụ thể không được đăng ký:
+
+1. Tạo collection `/ineligibility` trong Firestore
+2. Thêm document: doc ID = empCode (6 chữ số), fields: `{ reason: "lý do chặn" }`
+3. Khi user nhập empCode bị chặn, hệ thống hiện banner đỏ và không cho qua Step 2.
+
+Hoặc dùng sheet **"Ineligibility"** trong Google Sheet (cột A = Mã NV, cột B = Lý do) cho GAS mode.
+
+> Firestore rules: `get` (đọc 1 doc) cho mọi user, `list` chỉ cho admin.
+
+### G.4. Set Enrollment Deadline
+
+```
+/config/main → {
+  deadline: Timestamp,        // thời hạn đăng ký
+  allowEnrollment: true/false, // khoá/mở đăng ký
+  maxChanges: 3,              // số lần đổi ca tối đa
+  emailConfirm: true/false    // gửi email xác nhận
+}
+```
+
+### G.5. Bulk Import (CSV)
+
+Dùng script có sẵn:
+- `scripts/seed-firestore.mjs` — import Slots và Config từ CSV vào Firestore
+- Sheet templates trong `sheet-templates/` — tham khảo format CSV
+
+```bash
+node scripts/seed-firestore.mjs
+```

@@ -5,6 +5,7 @@ export type AuditEvent =
   | 'book.create'
   | 'book.update'
   | 'book.cancel'
+  | 'book.rejected.blocked'
   | 'admin.deleteRegistration'
   | 'admin.updateSlot'
   | 'admin.createSlot'
