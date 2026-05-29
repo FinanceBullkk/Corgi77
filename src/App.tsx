@@ -109,6 +109,16 @@ function genId(): string {
   return Math.random().toString(36).slice(2);
 }
 
+/** Remove Vietnamese diacritics and convert to uppercase. */
+function toUpperNoAccent(str: string): string {
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')  // remove combining diacritical marks
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toUpperCase();
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────
 
 export function App() {
@@ -349,6 +359,12 @@ function AppInner() {
 
     const handleConfirmSubmit = async () => {
       if (!selection.speakingId || !selection.skillsId) return;
+      // F13: editing with same slots → no-op, no quota consumed
+      if (isEditing && selection.speakingId === curSpId && selection.skillsId === curSkId) {
+        setIsEditing(false);
+        setScreen('display');
+        return;
+      }
       try {
         // bookDb() enforces the blocklist server-side and returns res.error,
         // which is surfaced below — covers any path that skipped the Step 1 gate.
@@ -675,12 +691,13 @@ function Step1Form({
             <input
               id="fullName"
               className="input"
-              placeholder="Nguyễn Văn An"
+              placeholder="NGUYEN VAN AN"
               value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
+              onChange={(e) => setFullName(toUpperNoAccent(e.target.value))}
               maxLength={50}
+              style={{ textTransform: 'uppercase' }}
             />
-            <span className="help">Đúng theo tên trên hệ thống nhân sự</span>
+            <span className="help">Không dấu, in hoa · Đúng theo tên trên hệ thống nhân sự</span>
           </div>
 
           <div className="field" style={{ marginBottom: 0 }}>
