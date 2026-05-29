@@ -6,12 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test \"tests/**/*.test.mjs\"",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview",
-    "copy-to-gas": "node scripts/copy-to-gas.mjs",
-    "push": "npm run build && npm run copy-to-gas && cd gas && clasp push -f",
-    "deploy": "npm run push && cd gas && clasp deploy --deploymentId AKfycbw8krYHgIgLm1YT10OB40ENhrcJH471rFvTf0lKBR2LoMuaDSjnrOEfV20Rw4FsxUU --description \"$(date '+%Y-%m-%d %H:%M')\""
+    "preview": "vite preview"
   },
   "dependencies": {
     "firebase": "^12.13.0",

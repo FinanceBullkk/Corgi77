@@ -7,7 +7,7 @@ import {
   type InitResult,
   type MyBooking,
   type Slot,
-} from './lib/gas';
+} from './lib/types';
 import { initDb, bookDb, cancelDb, checkIneligibility } from './lib/db';
 import { fetchAdminEmails, isAdmin } from './lib/admin';
 import { AdminPanel } from './AdminPanel';

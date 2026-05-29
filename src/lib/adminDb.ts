@@ -13,7 +13,7 @@ import {
   deleteField,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import type { MyBooking, Slot } from './gas';
+import type { MyBooking, Slot } from './types';
 import { auditLog } from './audit';
 
 export interface Registration extends MyBooking {

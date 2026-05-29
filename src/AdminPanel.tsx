@@ -20,7 +20,7 @@ import {
   type Registration,
 } from './lib/adminDb';
 import { listAuditLogs, type AuditEntry } from './lib/audit';
-import { formatDateVi, minToHHmm, type Slot } from './lib/gas';
+import { formatDateVi, minToHHmm, type Slot } from './lib/types';
 
 type Tab = 'overview' | 'registrations' | 'slots' | 'ineligibility' | 'config' | 'audit';
 

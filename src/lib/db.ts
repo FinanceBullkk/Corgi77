@@ -10,7 +10,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import type { BookPayload, BookResult, CancelResult, InitResult, Slot } from './gas';
+import type { BookPayload, BookResult, CancelResult, InitResult, Slot } from './types';
 import { auditLog } from './audit';
 
 // ── helpers ──────────────────────────────────────────────────────────────
