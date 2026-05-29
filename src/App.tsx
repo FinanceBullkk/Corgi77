@@ -841,7 +841,7 @@ function CalendarStep({
 
           {hours.map((h) => (
             <Fragment key={h}>
-              <div className="cal-time">{String(h).padStart(2, '0')}:00</div>
+              <div className={`cal-time${h === firstHour ? ' first' : ''}`}>{String(h).padStart(2, '0')}:00</div>
               {dates.map((date) => {
                 const blocks = (byDate[date] ?? []).filter(
                   (s) => Math.floor(s.startMin / 60) === h,
