@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin · Cấu hình</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ─── Topbar ─────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-left">
+        <span class="logo"><span class="logo-mark">C7</span></span>
+        <div class="topbar-title">
+          <span class="t">Admin Panel<span class="badge-admin">Admin</span></span>
+          <span class="s">Quản trị đăng ký · Assessment Q2 2026</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <button class="btn ghost sm" type="button" aria-label="Tải lại">↻ Tải lại</button>
+        <button class="btn ghost sm" type="button">← Về trang User</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ─── Tabs ───────────────────────────────────────────────────────── -->
+  <nav class="tabbar">
+    <div class="tabbar-inner">
+      <button class="tab" type="button">Tổng quan</button>
+      <button class="tab" type="button">Đăng ký <span class="count">2</span></button>
+      <button class="tab" type="button">Ca thi <span class="count">14</span></button>
+      <button class="tab" type="button">Danh sách chặn <span class="count">3</span></button>
+      <button class="tab active" type="button">Cấu hình</button>
+      <button class="tab" type="button">Audit</button>
+    </div>
+  </nav>
+
+  <!-- ─── Content ────────────────────────────────────────────────────── -->
+  <main class="container" style="max-width: 880px; flex: 1;">
+
+    <div class="page-hd">
+      <h1>Cấu hình hệ thống</h1>
+      <p class="sub">Điều khiển đăng ký, thông báo và phân quyền cho kỳ Assessment Q2 2026.</p>
+    </div>
+
+    <!-- Group 1 · Đăng ký & Đổi ca -->
+    <section class="card set-group">
+      <div class="set-group-hd">
+        <span class="gi" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5v-7Z" stroke="currentColor" stroke-width="1.3"/><path d="M2 6.5h12M5 3v2M11 3v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </span>
+        <div>
+          <div class="gt">Đăng ký &amp; Đổi ca</div>
+          <div class="gs">Quy tắc cho phép nhân viên đăng ký và thay đổi ca thi.</div>
+        </div>
+      </div>
+
+      <div class="set-row">
+        <div class="set-info">
+          <div class="set-label">Cho phép đăng ký mới / sửa ca</div>
+          <div class="set-desc">Khi tắt, user không thể đăng ký hoặc đổi ca nữa nhưng vẫn xem được booking đã có.</div>
+        </div>
+        <div class="set-control">
+          <label class="switch">
+            <input type="checkbox" id="tg-open" checked />
+            <span class="track"></span>
+            <span class="state-txt" data-on="Bật" data-off="Tắt">Bật</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="set-row">
+        <div class="set-info">
+          <div class="set-label">Số lần được đổi ca</div>
+          <div class="set-desc">Mỗi user được đổi ca tối đa bấy nhiêu lần sau khi đã đăng ký.</div>
+        </div>
+        <div class="set-control">
+          <div class="stepper-num">
+            <button type="button" data-step="-1" aria-label="Giảm">−</button>
+            <input type="text" inputmode="numeric" id="num-changes" value="3" />
+            <button type="button" data-step="1" aria-label="Tăng">+</button>
+          </div>
+          <span class="text-sm text-muted">lần / user</span>
+        </div>
+      </div>
+
+      <div class="set-row">
+        <div class="set-info">
+          <div class="set-label">Hạn đăng ký (deadline)</div>
+          <div class="set-desc">Theo múi giờ thiết bị của bạn. Để trống = không giới hạn thời gian đăng ký.</div>
+        </div>
+        <div class="set-control">
+          <input class="input dt" type="datetime-local" id="deadline" value="2026-06-02T22:00" />
+          <button class="btn-link" type="button" id="clear-deadline">Xoá</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Group 2 · Email & Thông báo -->
+    <section class="card set-group">
+      <div class="set-group-hd">
+        <span class="gi" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5v-7Z" stroke="currentColor" stroke-width="1.3"/><path d="m2.5 4.5 5.5 4 5.5-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <div>
+          <div class="gt">Email &amp; Thông báo</div>
+          <div class="gs">Email tự động gửi cho nhân viên sau khi thao tác.</div>
+        </div>
+      </div>
+
+      <div class="set-row">
+        <div class="set-info">
+          <div class="set-label">Gửi email xác nhận sau khi đăng ký</div>
+          <div class="set-desc">Cần cài extension <code>firestore-send-email</code> trong Firebase. Email được ghi vào collection <code>/mail</code>.</div>
+        </div>
+        <div class="set-control">
+          <label class="switch">
+            <input type="checkbox" id="tg-email" />
+            <span class="track"></span>
+            <span class="state-txt" data-on="Bật" data-off="Tắt">Tắt</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Group 3 · Phân quyền Admin -->
+    <section class="card set-group">
+      <div class="set-group-hd">
+        <span class="gi" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2 3 4v3.5c0 3 2.1 5.2 5 6.5 2.9-1.3 5-3.5 5-6.5V4L8 2Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="m6 8 1.5 1.5L10.5 6.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <div>
+          <div class="gt">Phân quyền Admin</div>
+          <div class="gs">Cấp quyền admin không cần deploy lại.</div>
+        </div>
+      </div>
+
+      <div class="set-row stacked">
+        <div class="set-info">
+          <div class="set-label">Admin email bổ sung</div>
+          <div class="set-desc">Mỗi dòng 1 email. Những tài khoản này sẽ có toàn quyền admin.</div>
+        </div>
+        <textarea class="input textarea" id="admin-emails" spellcheck="false" placeholder="admin1@cyberlogitec.com&#10;admin2@cyberlogitec.com">admin1@cyberlogitec.com
+admin2@cyberlogitec.com</textarea>
+      </div>
+
+      <div class="set-row stacked" style="padding-top: 0;">
+        <div class="set-info">
+          <div class="set-label" style="font-size: var(--fs-sm); color: var(--ink-600);">Admin mặc định (hardcoded)</div>
+          <div class="set-desc">Luôn có quyền, không thể gỡ ở đây.</div>
+          <div class="admin-chips">
+            <span class="admin-chip"><span class="dot">H</span>hao.nha <span class="lock">🔒</span></span>
+            <span class="admin-chip"><span class="dot">P</span>phuc.lnk <span class="lock">🔒</span></span>
+            <span class="admin-chip"><span class="dot">A</span>anhhao.dl108 <span class="lock">🔒</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div style="height: var(--s-6);"></div>
+  </main>
+
+  <!-- ─── Sticky save bar ────────────────────────────────────────────── -->
+  <div class="save-bar">
+    <div class="save-bar-inner">
+      <div class="save-status" id="save-status">
+        <span class="sdot"></span>
+        <span id="save-text">Đã lưu · cập nhật gần nhất 14:32</span>
+      </div>
+      <div class="row">
+        <button class="btn ghost" type="button" id="reset-btn">Hoàn tác</button>
+        <button class="btn" type="button" id="save-btn">Lưu cấu hình</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Toggle switch state text
+  document.querySelectorAll('.switch input').forEach(function (inp) {
+    var txt = inp.parentElement.querySelector('.state-txt');
+    function sync() { txt.textContent = inp.checked ? txt.dataset.on : txt.dataset.off; }
+    inp.addEventListener('change', function () { sync(); markDirty(); });
+    sync();
+  });
+
+  // Number stepper
+  document.querySelectorAll('.stepper-num').forEach(function (wrap) {
+    var input = wrap.querySelector('input');
+    wrap.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var v = parseInt(input.value, 10) || 0;
+        v = Math.max(0, Math.min(99, v + parseInt(b.dataset.step, 10)));
+        input.value = v; markDirty();
+      });
+    });
+    input.addEventListener('input', function () {
+      input.value = input.value.replace(/[^0-9]/g, '').slice(0, 2);
+      markDirty();
+    });
+  });
+
+  // Clear deadline
+  document.getElementById('clear-deadline').addEventListener('click', function () {
+    document.getElementById('deadline').value = ''; markDirty();
+  });
+
+  // Dirty tracking
+  var saveStatus = document.getElementById('save-status');
+  var statusText = document.getElementById('save-text');
+  function markDirty() {
+    saveStatus.classList.add('dirty');
+    statusText.textContent = 'Có thay đổi chưa lưu';
+  }
+  ['deadline', 'admin-emails'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', markDirty);
+  });
+
+  document.getElementById('save-btn').addEventListener('click', function () {
+    saveStatus.classList.remove('dirty');
+    var now = new Date();
+    var hh = String(now.getHours()).padStart(2, '0');
+    var mm = String(now.getMinutes()).padStart(2, '0');
+    statusText.textContent = 'Đã lưu · cập nhật gần nhất ' + hh + ':' + mm;
+  });
+</script>
+</body>
+</html>

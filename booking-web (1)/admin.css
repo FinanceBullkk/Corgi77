@@ -1,0 +1,109 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Admin panel styles · uses tokens.css + styles.css
+   Enterprise settings pattern: grouped cards, label+desc | control rows
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ─── Admin topbar variant ─────────────────────────────────────────────── */
+.topbar-title .t .badge-admin {
+  display: inline-block; margin-left: var(--s-2); padding: 1px 7px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--brand-700); background: var(--brand-50); border: 1px solid var(--brand-100);
+  border-radius: var(--r-xs); vertical-align: middle; transform: translateY(-1px);
+}
+
+/* ─── Tab bar ──────────────────────────────────────────────────────────── */
+.tabbar { background: var(--white); border-bottom: 1px solid var(--ink-150); }
+.tabbar-inner { max-width: 1100px; margin: 0 auto; padding: 0 var(--s-5); display: flex; gap: var(--s-1); }
+.tab {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-4) var(--s-3) calc(var(--s-4) - 2px);
+  font-size: var(--fs-base); font-weight: 500; color: var(--ink-500);
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  cursor: pointer; transition: color var(--t-fast) var(--ease-out), border-color var(--t-fast) var(--ease-out);
+  white-space: nowrap;
+}
+.tab:hover { color: var(--ink-800); }
+.tab.active { color: var(--brand-600); border-bottom-color: var(--brand-500); font-weight: 600; }
+.tab .count {
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--r-pill);
+  background: var(--ink-100); color: var(--ink-600); font-size: var(--fs-xs); font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums;
+}
+.tab.active .count { background: var(--brand-100); color: var(--brand-700); }
+
+/* ─── Page header ──────────────────────────────────────────────────────── */
+.page-hd { margin-bottom: var(--s-6); }
+.page-hd h1 { font-size: var(--fs-2xl); font-weight: 600; }
+.page-hd .sub { font-size: var(--fs-base); color: var(--ink-500); margin-top: var(--s-1); }
+
+/* ─── Settings group card ──────────────────────────────────────────────── */
+.set-group { margin-bottom: var(--s-5); }
+.set-group-hd { padding: var(--s-4) var(--s-6); border-bottom: 1px solid var(--ink-100); display: flex; align-items: center; gap: var(--s-3); }
+.set-group-hd .gi { width: 30px; height: 30px; border-radius: var(--r-sm); background: var(--brand-50); color: var(--brand-600); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.set-group-hd .gt { font-size: var(--fs-md); font-weight: 600; color: var(--ink-900); }
+.set-group-hd .gs { font-size: var(--fs-sm); color: var(--ink-500); margin-top: 1px; }
+
+/* ─── Setting row: [info | control] ────────────────────────────────────── */
+.set-row {
+  display: grid; grid-template-columns: 1fr auto; gap: var(--s-8);
+  align-items: center; padding: var(--s-5) var(--s-6);
+}
+.set-row + .set-row { border-top: 1px solid var(--ink-100); }
+.set-row.stacked { grid-template-columns: 1fr; gap: var(--s-3); align-items: stretch; }
+.set-info { min-width: 0; }
+.set-info .set-label { font-size: var(--fs-base); font-weight: 600; color: var(--ink-900); }
+.set-info .set-desc { font-size: var(--fs-sm); color: var(--ink-500); margin-top: 3px; line-height: var(--lh-snug); max-width: 52ch; }
+.set-info .set-desc code { font-family: var(--font-mono); font-size: 0.88em; background: var(--ink-100); color: var(--ink-700); padding: 1px 5px; border-radius: var(--r-xs); }
+.set-control { display: flex; align-items: center; gap: var(--s-3); justify-self: end; }
+
+/* ─── Toggle switch ────────────────────────────────────────────────────── */
+.switch { position: relative; display: inline-flex; align-items: center; gap: var(--s-3); cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch .track {
+  width: 42px; height: 24px; border-radius: var(--r-pill); background: var(--ink-200);
+  position: relative; flex-shrink: 0; transition: background var(--t-base) var(--ease-out);
+}
+.switch .track::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+  background: var(--white); border-radius: 50%; box-shadow: var(--sh-2);
+  transition: transform var(--t-base) var(--ease-out);
+}
+.switch input:checked + .track { background: var(--brand-500); }
+.switch input:checked + .track::after { transform: translateX(18px); }
+.switch input:focus-visible + .track { box-shadow: var(--sh-focus); }
+.switch .state-txt { font-size: var(--fs-sm); font-weight: 600; color: var(--ink-500); min-width: 30px; }
+.switch input:checked ~ .state-txt { color: var(--success-600); }
+
+/* ─── Number stepper ───────────────────────────────────────────────────── */
+.stepper-num { display: inline-flex; align-items: stretch; border: 1px solid var(--ink-200); border-radius: var(--r-sm); overflow: hidden; background: var(--white); }
+.stepper-num button {
+  width: 38px; border: 0; background: var(--ink-25); color: var(--ink-600); font-size: var(--fs-lg);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background var(--t-fast) var(--ease-out);
+}
+.stepper-num button:hover { background: var(--ink-100); color: var(--ink-900); }
+.stepper-num button:first-child { border-right: 1px solid var(--ink-200); }
+.stepper-num button:last-child { border-left: 1px solid var(--ink-200); }
+.stepper-num input {
+  width: 56px; border: 0; text-align: center; font-size: var(--fs-base); font-weight: 600;
+  color: var(--ink-900); font-family: inherit; font-variant-numeric: tabular-nums; background: var(--white);
+}
+.stepper-num input:focus { outline: none; }
+.stepper-num:focus-within { border-color: var(--brand-500); box-shadow: var(--sh-focus); }
+
+/* ─── Datetime control ─────────────────────────────────────────────────── */
+.input.dt { width: 230px; height: 42px; }
+.input.textarea { height: auto; min-height: 92px; padding: var(--s-3); line-height: var(--lh-base); resize: vertical; width: 100%; font-family: var(--font-mono); font-size: var(--fs-sm); }
+
+/* ─── Admin chips (hardcoded bootstrap admins) ─────────────────────────── */
+.admin-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-2); }
+.admin-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; background: var(--ink-50); border: 1px solid var(--ink-150); border-radius: var(--r-pill); font-size: var(--fs-sm); color: var(--ink-700); font-variant-numeric: tabular-nums; }
+.admin-chip .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--brand-100); color: var(--brand-700); font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.admin-chip .lock { color: var(--ink-400); font-size: var(--fs-xs); }
+
+/* ─── Sticky save bar ──────────────────────────────────────────────────── */
+.save-bar { position: sticky; bottom: 0; background: var(--white); border-top: 1px solid var(--ink-150); box-shadow: 0 -6px 16px rgba(15,18,23,0.05); z-index: var(--z-sticky); }
+.save-bar-inner { max-width: 1100px; margin: 0 auto; padding: var(--s-3) var(--s-5); display: flex; justify-content: space-between; align-items: center; gap: var(--s-4); }
+.save-status { display: flex; align-items: center; gap: var(--s-2); font-size: var(--fs-sm); color: var(--ink-500); }
+.save-status .sdot { width: 8px; height: 8px; border-radius: 50%; background: var(--success-500); flex-shrink: 0; }
+.save-status.dirty .sdot { background: var(--warn-500); }
+.save-status.dirty { color: var(--warn-700); font-weight: 500; }

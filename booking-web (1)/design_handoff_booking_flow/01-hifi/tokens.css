@@ -1,0 +1,125 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Design Tokens · Corgi7 Assessment Booking
+   Aligned with CyberLogitec corporate brand (blue · clean enterprise B2B)
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ─── Brand · CyberLogitec corporate blue ──────────────────────────── */
+  --brand-900: #052240;
+  --brand-800: #062E55;
+  --brand-700: #083968;
+  --brand-600: #0A4477;
+  --brand-500: #0B4F8B;        /* primary */
+  --brand-400: #2A6FAC;
+  --brand-300: #5A95C6;
+  --brand-200: #A5C2DC;
+  --brand-100: #DCE7F1;
+  --brand-50:  #F0F5FA;
+
+  /* ─── Accent · 3 Skills · warm amber complement ────────────────────── */
+  --accent-700: #7A4612;
+  --accent-600: #95591A;
+  --accent-500: #B26A1F;
+  --accent-400: #C98335;
+  --accent-300: #DDA567;
+  --accent-200: #ECC79C;
+  --accent-100: #F6E3CC;
+  --accent-50:  #FCF6ED;
+
+  /* ─── Semantic ─────────────────────────────────────────────────────── */
+  --success-700: #145C36;
+  --success-600: #1B7A48;
+  --success-500: #239359;
+  --success-100: #E0F1E7;
+  --success-50:  #F1F8F4;
+
+  --warn-700:    #8A5300;
+  --warn-600:    #A86700;
+  --warn-500:    #C27A0A;
+  --warn-100:    #FBF1DC;
+  --warn-50:     #FDF9EE;
+
+  --danger-700:  #8C2C20;
+  --danger-600:  #A8362A;
+  --danger-500:  #C2483B;
+  --danger-100:  #FBE5E1;
+  --danger-50:   #FDF1EF;
+
+  /* ─── Neutrals · cool slate scale ──────────────────────────────────── */
+  --ink-900: #0F1217;
+  --ink-800: #1A1F27;
+  --ink-700: #2E343F;
+  --ink-600: #444B59;
+  --ink-500: #5E6573;
+  --ink-400: #828A99;
+  --ink-300: #B0B6C1;
+  --ink-200: #D5DAE2;
+  --ink-150: #E2E5EB;
+  --ink-100: #ECEEF3;
+  --ink-50:  #F5F6F9;
+  --ink-25:  #FAFBFC;
+  --white:   #FFFFFF;
+
+  /* ─── Spacing scale (4px base) ─────────────────────────────────────── */
+  --s-0: 0;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 28px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+
+  /* ─── Radius ───────────────────────────────────────────────────────── */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+
+  /* ─── Shadows ──────────────────────────────────────────────────────── */
+  --sh-1: 0 1px 2px rgba(15, 18, 23, 0.04), 0 1px 1px rgba(15, 18, 23, 0.03);
+  --sh-2: 0 2px 4px rgba(15, 18, 23, 0.06), 0 1px 2px rgba(15, 18, 23, 0.04);
+  --sh-3: 0 4px 8px rgba(15, 18, 23, 0.06), 0 2px 4px rgba(15, 18, 23, 0.05);
+  --sh-4: 0 8px 16px rgba(15, 18, 23, 0.08), 0 4px 8px rgba(15, 18, 23, 0.05);
+  --sh-modal: 0 24px 60px rgba(15, 18, 23, 0.22), 0 10px 24px rgba(15, 18, 23, 0.12);
+  --sh-focus: 0 0 0 3px rgba(11, 79, 139, 0.25);
+  --sh-focus-danger: 0 0 0 3px rgba(194, 72, 59, 0.25);
+
+  /* ─── Typography ───────────────────────────────────────────────────── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 30px;
+  --fs-4xl: 36px;
+
+  --lh-tight: 1.25;
+  --lh-snug: 1.4;
+  --lh-base: 1.55;
+  --lh-loose: 1.7;
+
+  /* ─── Layer / z-index ──────────────────────────────────────────────── */
+  --z-sticky: 50;
+  --z-overlay: 100;
+  --z-modal: 200;
+  --z-toast: 300;
+
+  /* ─── Motion ───────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --t-fast: 120ms;
+  --t-base: 180ms;
+  --t-slow: 280ms;
+}

@@ -1,0 +1,23 @@
+# UI/UX Redesign Brief: Corgi7 Assessment Booking System
+
+## 1. Project Overview & Context
+**Corgi7** là hệ thống đăng ký ca thi Assessment nội bộ cho nhân viên công ty (CyberLogitec). Người dùng đăng nhập qua Google (`@cyberlogitec.com`), điền thông tin, chọn 2 ca thi (Speaking + 3 Skills), và xác nhận.
+
+*   **Tech stack:** React + TypeScript + Firebase (Firestore + Auth). Deployment trên Firebase Hosting.
+*   **Đối tượng:** Nhân viên (95% - đăng ký thi), Admin (5% - quản lý slot, cấu hình, xuất data).
+*   **Mục tiêu cốt lõi:** Tối ưu luồng thao tác, giảm tải nhận thức (cognitive load) cho người dùng cuối, và chuẩn hóa UI Admin theo hệ thống component quản trị hiện đại.
+
+## 2. Kỳ Vọng Chuyên Môn (Expert UX Standards)
+Chúng tôi coi nhóm UX/UI là đối tác chiến lược. Đề nghị không chỉ "làm đẹp" giao diện hiện có, mà phải định hình lại trải nghiệm dựa trên dữ liệu và chuẩn công nghiệp:
+*   **Heuristic Evaluation:** Yêu cầu audit luồng hiện tại theo nguyên tắc Nielsen Norman trước khi thiết kế.
+*   **Problem-Driven, Not Solution-Forced:** Các pain points trong tài liệu này tập trung vào *vấn đề*. Nhóm UX toàn quyền đề xuất giải pháp, thay đổi flow, hoặc thay thế UI pattern miễn là giải quyết triệt để vấn đề.
+*   **Enterprise UI Patterns:** Áp dụng chuẩn thiết kế hệ thống quản trị hiện đại (data grid, bulk actions, complex filtering, state management) cho Admin Panel.
+*   **UX Rationale:** Mọi quyết định thay đổi layout/flow lớn cần đi kèm lập luận chuyên môn.
+
+## 3. Current User Flow & Screens
+```text
+[Sign In via Google] → [Check Domain @cyberlogitec.com]
+    ↓ 
+[App Inner] ──── (Đã có booking) ──→ [Booking Summary] → [Edit Flow]
+    │                                                     
+    └── (Chưa có booking) ──→ [Step 1: User Info] → [Step 2: Select Slots] → [Confirm]

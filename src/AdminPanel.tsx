@@ -85,47 +85,56 @@ export function AdminPanel({ adminEmail, onExit }: { adminEmail: string; onExit:
   return (
     <div className="app">
       <AdminHeader onExit={onExit} onReload={reload} />
-      <div className="admin-tabs">
-        <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>Tổng quan</TabBtn>
-        <TabBtn active={tab === 'registrations'} onClick={() => setTab('registrations')}>
-          Đăng ký <span className="tab-count">{regs.length}</span>
-        </TabBtn>
-        <TabBtn active={tab === 'slots'} onClick={() => setTab('slots')}>
-          Ca thi <span className="tab-count">{slots.length}</span>
-        </TabBtn>
-        <TabBtn active={tab === 'ineligibility'} onClick={() => setTab('ineligibility')}>
-          Danh sách chặn <span className="tab-count">{inelig.length}</span>
-        </TabBtn>
-        <TabBtn active={tab === 'config'} onClick={() => setTab('config')}>Cấu hình</TabBtn>
-        <TabBtn active={tab === 'audit'} onClick={() => setTab('audit')}>Audit</TabBtn>
-      </div>
+      <nav className="tabbar">
+        <div className="tabbar-inner">
+          <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>Tổng quan</TabBtn>
+          <TabBtn active={tab === 'registrations'} onClick={() => setTab('registrations')}>
+            Đăng ký <span className="count">{regs.length}</span>
+          </TabBtn>
+          <TabBtn active={tab === 'slots'} onClick={() => setTab('slots')}>
+            Ca thi <span className="count">{slots.length}</span>
+          </TabBtn>
+          <TabBtn active={tab === 'ineligibility'} onClick={() => setTab('ineligibility')}>
+            Danh sách chặn <span className="count">{inelig.length}</span>
+          </TabBtn>
+          <TabBtn active={tab === 'config'} onClick={() => setTab('config')}>Cấu hình</TabBtn>
+          <TabBtn active={tab === 'audit'} onClick={() => setTab('audit')}>Audit</TabBtn>
+        </div>
+      </nav>
 
-      {tab === 'overview' && <Overview slots={slots} regs={regs} />}
-      {tab === 'registrations' && (
-        <RegistrationsTab adminEmail={adminEmail} slots={slots} regs={regs} onReload={reload} />
-      )}
-      {tab === 'slots' && (
-        <SlotsTab adminEmail={adminEmail} slots={slots} regs={regs} onReload={reload} />
-      )}
-      {tab === 'ineligibility' && (
-        <IneligibilityTab adminEmail={adminEmail} inelig={inelig} onReload={reload} />
-      )}
-      {tab === 'config' && <ConfigTab adminEmail={adminEmail} cfg={cfg} onReload={reload} />}
-      {tab === 'audit' && <AuditTab />}
+      <main className="container wide" style={{ flex: 1 }}>
+        {tab === 'overview' && <Overview slots={slots} regs={regs} />}
+        {tab === 'registrations' && (
+          <RegistrationsTab adminEmail={adminEmail} slots={slots} regs={regs} onReload={reload} />
+        )}
+        {tab === 'slots' && (
+          <SlotsTab adminEmail={adminEmail} slots={slots} regs={regs} onReload={reload} />
+        )}
+        {tab === 'ineligibility' && (
+          <IneligibilityTab adminEmail={adminEmail} inelig={inelig} onReload={reload} />
+        )}
+        {tab === 'config' && <ConfigTab adminEmail={adminEmail} cfg={cfg} onReload={reload} />}
+        {tab === 'audit' && <AuditTab />}
+      </main>
     </div>
   );
 }
 
 function AdminHeader({ onExit, onReload }: { onExit: () => void; onReload?: () => void }) {
   return (
-    <header className="app-header">
-      <div>
-        <h1>🛠 Admin Panel</h1>
-        <div className="sub">Quản trị đăng ký Assessment Q2 2026</div>
-      </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        {onReload && <button className="ghost" onClick={onReload} style={{ fontSize: 13 }}>↻ Reload</button>}
-        <button className="ghost" onClick={onExit} style={{ fontSize: 13 }}>← Về trang User</button>
+    <header className="topbar">
+      <div className="topbar-inner">
+        <div className="topbar-left">
+          <span className="logo"><span className="logo-mark">C7</span></span>
+          <div className="topbar-title">
+            <span className="t">Admin Panel <span className="badge-admin">Admin</span></span>
+            <span className="s">Quản trị đăng ký · Assessment Q2 2026</span>
+          </div>
+        </div>
+        <div className="topbar-right">
+          {onReload && <button className="btn ghost sm" type="button" onClick={onReload}>↻ Tải lại</button>}
+          <button className="btn ghost sm" type="button" onClick={onExit}>← Về trang User</button>
+        </div>
       </div>
     </header>
   );
@@ -133,7 +142,7 @@ function AdminHeader({ onExit, onReload }: { onExit: () => void; onReload?: () =
 
 function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button type="button" className={`admin-tab ${active ? 'active' : ''}`} onClick={onClick}>{children}</button>
+    <button type="button" className={`tab ${active ? 'active' : ''}`} onClick={onClick}>{children}</button>
   );
 }
 
@@ -757,24 +766,36 @@ function ConfigTab({
   adminEmail, cfg, onReload,
 }: { adminEmail: string; cfg: ConfigState; onReload: () => void }) {
   const [allowEnrollment, setAllowEnrollment] = useState(cfg.allowEnrollment);
-  const [maxChanges, setMaxChanges] = useState(String(cfg.maxChanges));
+  const [maxChanges, setMaxChanges] = useState(cfg.maxChanges);
   const [deadline, setDeadline] = useState(cfg.deadline ? toLocalInputValue(cfg.deadline) : '');
   const [emailConfirm, setEmailConfirm] = useState(cfg.emailConfirm);
   const [adminEmails, setAdminEmails] = useState(cfg.adminEmails.join('\n'));
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
 
   // Sync local state when cfg prop changes (after onReload fetches fresh config)
   useEffect(() => {
     setAllowEnrollment(cfg.allowEnrollment);
-    setMaxChanges(String(cfg.maxChanges));
+    setMaxChanges(cfg.maxChanges);
     setDeadline(cfg.deadline ? toLocalInputValue(cfg.deadline) : '');
     setEmailConfirm(cfg.emailConfirm);
     setAdminEmails(cfg.adminEmails.join('\n'));
+    setDirty(false);
   }, [cfg]);
 
+  const markDirty = () => setDirty(true);
+
+  const clearDeadline = () => { setDeadline(''); setDirty(true); };
+
+  const stepMaxChanges = (delta: number) => {
+    const v = Math.max(0, Math.min(99, maxChanges + delta));
+    setMaxChanges(v);
+    setDirty(true);
+  };
+
   const save = async () => {
-    const mc = parseInt(maxChanges, 10);
+    const mc = maxChanges;
     if (isNaN(mc) || mc < 0) { alert('Số lần đổi phải là số ≥ 0'); return; }
     const extraAdmins = adminEmails.split(/[\n,]/).map((s) => s.trim().toLowerCase()).filter(Boolean);
     setBusy(true);
@@ -787,6 +808,7 @@ function ConfigTab({
         adminEmails: extraAdmins,
       });
       setSavedAt(new Date().toLocaleTimeString('vi-VN'));
+      setDirty(false);
       onReload();
     } catch (e) {
       alert((e as Error).message);
@@ -796,66 +818,147 @@ function ConfigTab({
   };
 
   return (
-    <div className="card">
-      <h2>Cấu hình</h2>
-
-      <div className="config-row">
-        <label className="config-toggle">
-          <input type="checkbox" checked={allowEnrollment} onChange={(e) => setAllowEnrollment(e.target.checked)} />
-          <span>Cho phép đăng ký mới / sửa ca</span>
-        </label>
-        <div className="config-hint">Bỏ tick để chặn user đăng ký (vẫn xem được booking cũ).</div>
+    <>
+      <div className="page-hd">
+        <h1>Cấu hình hệ thống</h1>
+        <p className="sub">Điều khiển đăng ký, thông báo và phân quyền cho kỳ Assessment Q2 2026.</p>
       </div>
 
-      <div className="config-row">
-        <label>
-          <div className="config-label">Số lần được đổi ca (mỗi user)</div>
-          <input type="number" min="0" value={maxChanges} onChange={(e) => setMaxChanges(e.target.value)} style={{ width: 100 }} />
-        </label>
-      </div>
-
-      <div className="config-row">
-        <label>
-          <div className="config-label">Hạn đăng ký (deadline)</div>
-          <input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
-          {deadline && <button type="button" className="ghost small" style={{ marginLeft: 8 }} onClick={() => setDeadline('')}>Xoá deadline</button>}
-        </label>
-        <div className="config-hint">Theo múi giờ thiết bị của bạn. Để trống = không giới hạn.</div>
-      </div>
-
-      <div className="config-row">
-        <label className="config-toggle">
-          <input type="checkbox" checked={emailConfirm} onChange={(e) => setEmailConfirm(e.target.checked)} />
-          <span>Gửi email xác nhận sau khi đăng ký</span>
-        </label>
-        <div className="config-hint">
-          Cần cài extension <b>firestore-send-email</b> trong Firebase. Email được ghi vào <code>/mail</code>.
+      {/* Group 1 · Đăng ký & Đổi ca */}
+      <section className="card set-group">
+        <div className="set-group-hd">
+          <span className="gi" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5v-7Z" stroke="currentColor" strokeWidth="1.3"/><path d="M2 6.5h12M5 3v2M11 3v2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+          </span>
+          <div>
+            <div className="gt">Đăng ký & Đổi ca</div>
+            <div className="gs">Quy tắc cho phép nhân viên đăng ký và thay đổi ca thi.</div>
+          </div>
         </div>
-      </div>
 
-      <div className="config-row">
-        <label>
-          <div className="config-label">Admin email bổ sung (mỗi dòng 1 email)</div>
+        <div className="set-row">
+          <div className="set-info">
+            <div className="set-label">Cho phép đăng ký mới / sửa ca</div>
+            <div className="set-desc">Khi tắt, user không thể đăng ký hoặc đổi ca nữa nhưng vẫn xem được booking đã có.</div>
+          </div>
+          <div className="set-control">
+            <label className="switch">
+              <input type="checkbox" checked={allowEnrollment} onChange={(e) => { setAllowEnrollment(e.target.checked); markDirty(); }} />
+              <span className="track"></span>
+              <span className="state-txt">{allowEnrollment ? 'Bật' : 'Tắt'}</span>
+            </label>
+          </div>
+        </div>
+
+        <div className="set-row">
+          <div className="set-info">
+            <div className="set-label">Số lần được đổi ca</div>
+            <div className="set-desc">Mỗi user được đổi ca tối đa bấy nhiêu lần sau khi đã đăng ký.</div>
+          </div>
+          <div className="set-control">
+            <div className="stepper-num">
+              <button type="button" onClick={() => stepMaxChanges(-1)} aria-label="Giảm">−</button>
+              <input type="text" inputMode="numeric" value={maxChanges} onChange={(e) => { const v = parseInt(e.target.value.replace(/\D/g, '').slice(0, 2), 10) || 0; setMaxChanges(v); markDirty(); }} />
+              <button type="button" onClick={() => stepMaxChanges(1)} aria-label="Tăng">+</button>
+            </div>
+            <span className="text-sm text-muted">lần / user</span>
+          </div>
+        </div>
+
+        <div className="set-row">
+          <div className="set-info">
+            <div className="set-label">Hạn đăng ký (deadline)</div>
+            <div className="set-desc">Theo múi giờ thiết bị của bạn. Để trống = không giới hạn thời gian đăng ký.</div>
+          </div>
+          <div className="set-control">
+            <input className="input dt" type="datetime-local" value={deadline} onChange={(e) => { setDeadline(e.target.value); markDirty(); }} />
+            <button className="btn-link" type="button" onClick={clearDeadline}>Xoá</button>
+          </div>
+        </div>
+      </section>
+
+      {/* Group 2 · Email & Thông báo */}
+      <section className="card set-group">
+        <div className="set-group-hd">
+          <span className="gi" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h9A1.5 1.5 0 0 1 14 4.5v7A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5v-7Z" stroke="currentColor" strokeWidth="1.3"/><path d="m2.5 4.5 5.5 4 5.5-4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </span>
+          <div>
+            <div className="gt">Email & Thông báo</div>
+            <div className="gs">Email tự động gửi cho nhân viên sau khi thao tác.</div>
+          </div>
+        </div>
+
+        <div className="set-row">
+          <div className="set-info">
+            <div className="set-label">Gửi email xác nhận sau khi đăng ký</div>
+            <div className="set-desc">Cần cài extension <code>firestore-send-email</code> trong Firebase. Email được ghi vào collection <code>/mail</code>.</div>
+          </div>
+          <div className="set-control">
+            <label className="switch">
+              <input type="checkbox" checked={emailConfirm} onChange={(e) => { setEmailConfirm(e.target.checked); markDirty(); }} />
+              <span className="track"></span>
+              <span className="state-txt">{emailConfirm ? 'Bật' : 'Tắt'}</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      {/* Group 3 · Phân quyền Admin */}
+      <section className="card set-group">
+        <div className="set-group-hd">
+          <span className="gi" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2 3 4v3.5c0 3 2.1 5.2 5 6.5 2.9-1.3 5-3.5 5-6.5V4L8 2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/><path d="m6 8 1.5 1.5L10.5 6.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </span>
+          <div>
+            <div className="gt">Phân quyền Admin</div>
+            <div className="gs">Cấp quyền admin không cần deploy lại.</div>
+          </div>
+        </div>
+
+        <div className="set-row stacked">
+          <div className="set-info">
+            <div className="set-label">Admin email bổ sung</div>
+            <div className="set-desc">Mỗi dòng 1 email. Những tài khoản này sẽ có toàn quyền admin.</div>
+          </div>
           <textarea
+            className="input textarea"
             value={adminEmails}
-            onChange={(e) => setAdminEmails(e.target.value)}
-            rows={3}
-            style={{ width: '100%', padding: 8, fontFamily: 'monospace', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)' }}
+            onChange={(e) => { setAdminEmails(e.target.value); markDirty(); }}
+            spellCheck={false}
             placeholder="admin1@cyberlogitec.com&#10;admin2@cyberlogitec.com"
           />
-        </label>
-        <div className="config-hint">
-          Các admin hardcoded (bootstrap) luôn có quyền: hao.nha, phuc.lnk, anhhao.dl108. Thêm ở đây để cấp quyền admin mà không cần deploy lại.
+        </div>
+
+        <div className="set-row stacked" style={{ paddingTop: 0 }}>
+          <div className="set-info">
+            <div className="set-label" style={{ fontSize: 'var(--fs-sm)', color: 'var(--ink-600)' }}>Admin mặc định (hardcoded)</div>
+            <div className="set-desc">Luôn có quyền, không thể gỡ ở đây.</div>
+            <div className="admin-chips">
+              <span className="admin-chip"><span className="dot">H</span>hao.nha <span className="lock">🔒</span></span>
+              <span className="admin-chip"><span className="dot">P</span>phuc.lnk <span className="lock">🔒</span></span>
+              <span className="admin-chip"><span className="dot">A</span>anhhao.dl108 <span className="lock">🔒</span></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Sticky save bar */}
+      <div className="save-bar">
+        <div className="save-bar-inner">
+          <div className={`save-status${dirty ? ' dirty' : ''}`}>
+            <span className="sdot"></span>
+            <span>{dirty ? 'Có thay đổi chưa lưu' : savedAt ? `Đã lưu · cập nhật gần nhất ${savedAt}` : 'Chưa có thay đổi'}</span>
+          </div>
+          <div className="row" style={{ display: 'flex', gap: 8 }}>
+            <button className="btn ghost" type="button" disabled={!dirty} onClick={() => { setAllowEnrollment(cfg.allowEnrollment); setMaxChanges(cfg.maxChanges); setDeadline(cfg.deadline ? toLocalInputValue(cfg.deadline) : ''); setEmailConfirm(cfg.emailConfirm); setAdminEmails(cfg.adminEmails.join('\n')); setDirty(false); }}>Hoàn tác</button>
+            <button className="btn" type="button" onClick={save} disabled={busy || !dirty}>
+              {busy ? <><span className="spinner" /> Đang lưu…</> : 'Lưu cấu hình'}
+            </button>
+          </div>
         </div>
       </div>
-
-      <div className="actions" style={{ marginTop: 20 }}>
-        <button className="primary" onClick={save} disabled={busy}>
-          {busy ? <><span className="spinner" /> Đang lưu…</> : 'Lưu cấu hình'}
-        </button>
-        {savedAt && <span style={{ color: 'var(--success, #2a7)', fontSize: 13 }}>✓ Đã lưu lúc {savedAt}</span>}
-      </div>
-    </div>
+    </>
   );
 }
 
