@@ -449,8 +449,8 @@ label.field span:first-child { display: block; font-size: var(--fs-sm); color: v
 .ev.sk.sel:hover { background: var(--accent-600); }
 .ev.sk.sel .ev-room, .ev.sk.sel .ev-rem { color: rgba(255,255,255,.92); opacity: 1; }
 
-/* Low availability accent for the remaining-count */
-.ev .ev-rem.warn { color: var(--warn-600); }
+/* Low availability accent for the remaining-count · warn-700 for WCAG AA contrast */
+.ev .ev-rem.warn { color: var(--warn-700); }
 
 /* Selected check chip */
 .ev.sel::after { content: '✓'; position: absolute; top: 6px; right: 7px; width: 16px; height: 16px; background: #fff; border-radius: 50%; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
@@ -897,9 +897,32 @@ label.field span:first-child { display: block; font-size: var(--fs-sm); color: v
 .bulkbar .blink { background: transparent; border: 0; color: var(--brand-200); font-size: var(--fs-sm); cursor: pointer; font-family: inherit; }
 .bulkbar .blink:hover { color: #fff; text-decoration: underline; }
 
-/* ─── Empty state ──────────────────────────────────────────────────────── */
+/* ─── Empty state (admin grids) ─────────────────────────────────────── */
 .empty-state { padding: var(--s-12) var(--s-6); text-align: center; color: var(--ink-500); }
 .empty-state .es-title { font-size: var(--fs-md); font-weight: 600; color: var(--ink-700); margin-bottom: var(--s-1); }
+
+/* ─── Calendar empty states (F16) ────────────────────────────────────── */
+/* No slots at all */
+.cal-empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--s-2); padding: var(--s-16) var(--s-6); text-align: center;
+  color: var(--ink-500);
+}
+.cal-empty-state svg { color: var(--ink-300); margin-bottom: var(--s-2); }
+.cal-empty-state .ces-title {
+  font-size: var(--fs-md); font-weight: 600; color: var(--ink-700); margin: 0;
+}
+.cal-empty-state .ces-body {
+  font-size: var(--fs-sm); color: var(--ink-500); max-width: 320px; margin: 0;
+}
+
+/* No slots for the active type (other type has slots) */
+.cal-type-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--s-3); padding: var(--s-10) var(--s-6); text-align: center;
+  border-top: 1px solid var(--ink-100);
+}
+.cal-type-empty p { font-size: var(--fs-sm); color: var(--ink-600); margin: 0; }
 
 /* ─── Audit (human-readable) ───────────────────────────────────────────── */
 .aud-list { display: flex; flex-direction: column; }
