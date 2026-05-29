@@ -682,6 +682,19 @@ function lint() {
       issues.push('Slot ' + sl.slotId + ': booked ' + booked + ' > capacity ' + sl.capacity);
   }
 
+  // 4b. Chồng giờ giữa 2 slot CÙNG LOẠI, CÙNG NGÀY.
+  //     BTC chốt: mỗi loại chỉ 1 ca / khung giờ → lịch render full-width (không lane-packing).
+  //     Slot nhập tay vào sheet nên lint cảnh báo để admin sửa.
+  for (var a1 = 0; a1 < slots.length; a1++) {
+    for (var b1 = a1 + 1; b1 < slots.length; b1++) {
+      var sa = slots[a1], sb = slots[b1];
+      if (sa.type === sb.type && sa.date === sb.date &&
+          sa.startMin < sb.endMin && sb.startMin < sa.endMin)
+        issues.push('Chồng giờ cùng loại: ' + sa.slotId + ' & ' + sb.slotId +
+          ' (' + sa.type + ', ' + sa.date + ').');
+    }
+  }
+
   // 5. User có booking nhưng 2 ca trùng giờ
   for (var i6 = 0; i6 < regs.length; i6++) {
     var rg = regs[i6];

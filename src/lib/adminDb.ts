@@ -95,6 +95,22 @@ export async function adminCreateSlot(
   if (payload.startMin >= payload.endMin) throw new Error('Giờ bắt đầu phải trước giờ kết thúc.');
   if (payload.capacity <= 0) throw new Error('Sức chứa phải > 0.');
 
+  // Chốt chặn nghiệp vụ: 2 ca CÙNG LOẠI không được chồng giờ trong cùng 1 ngày.
+  // BTC chốt "mỗi loại chỉ 1 ca / khung giờ" → lịch Step 2 render full-width,
+  // KHÔNG cần lane-packing (xem dev_handoff_2/CALENDAR_REDESIGN.md §5.1).
+  const clash = (await listSlots()).find(
+    (s) =>
+      s.type === payload.type &&
+      s.date === payload.date &&
+      payload.startMin < s.endMin &&
+      payload.endMin > s.startMin,
+  );
+  if (clash)
+    throw new Error(
+      `Ca này chồng giờ với ca "${clash.slotId}" (${minToHHmm(clash.startMin)}–${minToHHmm(clash.endMin)}) ` +
+        `cùng loại ${payload.type} trong ngày. Mỗi loại chỉ 1 ca / khung giờ.`,
+    );
+
   const remaining = payload.remaining ?? payload.capacity;
   await setDoc(ref, {
     type: payload.type,
