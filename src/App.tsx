@@ -1,17 +1,14 @@
 import { Component, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import {
-  book,
-  cancel,
-  checkBlocked,
   formatDateVi,
-  init,
   minToHHmm,
   overlaps,
   type InitResult,
   type MyBooking,
   type Slot,
 } from './lib/gas';
+import { initDb, bookDb, cancelDb, checkIneligibility } from './lib/db';
 import { fetchAdminEmails, isAdmin } from './lib/admin';
 import { AdminPanel } from './AdminPanel';
 import { onAuth, signInWithGoogle, signOutUser } from './lib/firebase';
@@ -123,6 +120,8 @@ export function App() {
 }
 
 function AppInner() {
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [data, setData] = useState<InitResult | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [screen, setScreen] = useState<FlowState>('step1');
@@ -132,8 +131,6 @@ function AppInner() {
   const [isEditing, setIsEditing] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [canAdmin, setCanAdmin] = useState(false);
-  const [adminEmail, setAdminEmail] = useState<string | null>(null);
-  const fbUserRef = useRef<User | null>(null);
   const skewRef = useRef(0);
   const [_tick, setTick] = useState(0);
 
@@ -150,8 +147,19 @@ function AppInner() {
       .catch(() => {});
   }, [data?.email]);
 
+  // Firebase Auth listener — run once
   useEffect(() => {
-    init()
+    const unsub = onAuth((u) => {
+      setAuthUser(u);
+      setAuthLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  // Load data after auth is resolved and user is signed in
+  useEffect(() => {
+    if (!authUser?.email) return;
+    initDb(authUser.email)
       .then((d) => {
         skewRef.current = new Date(d.serverNow).getTime() - Date.now();
         setData(d);
@@ -164,9 +172,7 @@ function AppInner() {
         }
       })
       .catch((e: Error) => setLoadErr(e.message || 'Không tải được dữ liệu.'));
-  }, []);
-
-  useEffect(() => onAuth((u) => { fbUserRef.current = u; }), []);
+  }, [authUser?.email]);
 
   const pushToast = useCallback((kind: ToastItem['kind'], text: string) => {
     const id = genId();
@@ -176,7 +182,7 @@ function AppInner() {
 
   const openAdmin = useCallback(async () => {
     try {
-      let email = fbUserRef.current?.email ?? null;
+        let email = authUser?.email ?? null;
       if (!email) {
         const cred = await signInWithGoogle();
         email = cred.user?.email ?? null;
@@ -190,8 +196,7 @@ function AppInner() {
         pushToast('error', `Tài khoản ${email} không có quyền admin.`);
         return;
       }
-      setAdminEmail(email);
-      setAdminOpen(true);
+        setAdminOpen(true);
     } catch (e) {
       const msg = (e as Error)?.message || String(e);
       if (!/popup-closed|cancelled-popup|popup-blocked/i.test(msg)) {
@@ -201,19 +206,55 @@ function AppInner() {
   }, [pushToast]);
 
   const handleSignOut = useCallback(async () => {
-    if (!window.confirm('Đăng xuất sẽ thoát toàn bộ tài khoản Google trên trình duyệt này. Tiếp tục?')) return;
+    if (!window.confirm('Đăng xuất sẽ thoát phiên đăng nhập hiện tại. Tiếp tục?')) return;
     try { await signOutUser(); } catch { /* ignore */ }
-    const logoutUrl = 'https://accounts.google.com/Logout';
-    // App chạy trong iframe sandbox của GAS → thử điều hướng top frame trước;
-    // nếu sandbox chặn top-nav thì điều hướng ngay trong frame hiện tại.
-    try {
-      if (window.top && window.top !== window.self) {
-        window.top.location.href = logoutUrl;
-        return;
-      }
-    } catch { /* cross-origin/sandbox chặn → fallback dưới đây */ }
-    window.location.href = logoutUrl;
   }, []);
+
+  // Auth loading state
+  if (authLoading) {
+    return (
+      <div className="app">
+        <div className="loading-screen">
+          <div className="spinner" />
+          Đang xác thực…
+        </div>
+      </div>
+    );
+  }
+
+  // Not signed in → show sign-in screen
+  if (!authUser) {
+    return (
+      <div className="app">
+        <header className="topbar">
+          <div className="topbar-inner">
+            <div className="topbar-left">
+              <div className="logo"><span className="logo-mark">CL</span></div>
+              <div style={{ width: 1, height: 24, background: 'var(--ink-150)', flexShrink: 0 }} />
+              <div className="topbar-title">
+                <span className="t">Assessment Booking</span>
+                <span className="s">Q2 2026 · English Proficiency Test</span>
+              </div>
+            </div>
+          </div>
+        </header>
+        <main className="container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
+          <h2 style={{ marginBottom: '1rem' }}>Đăng nhập để tiếp tục</h2>
+          <p className="text-sm text-muted" style={{ marginBottom: '2rem' }}>
+            Bạn cần đăng nhập bằng tài khoản Google để sử dụng hệ thống đặt lịch Assessment.
+          </p>
+          <button className="btn" onClick={() => signInWithGoogle().catch((e) => {
+            if (!/popup-closed|cancelled-popup|popup-blocked/i.test(e.message || '')) {
+              pushToast('error', 'Đăng nhập thất bại: ' + (e.message || e));
+            }
+          })}>
+            Đăng nhập với Google
+          </button>
+        </main>
+        <ToastStack toasts={toasts} />
+      </div>
+    );
+  }
 
   if (loadErr) {
     return (
@@ -240,7 +281,7 @@ function AppInner() {
   }
 
   if (adminOpen) {
-    return <AdminPanel adminEmail={adminEmail ?? data.email} onExit={() => setAdminOpen(false)} />;
+    return <AdminPanel adminEmail={data.email} onExit={() => setAdminOpen(false)} />;
   }
 
   const deadlineInfo = computeDeadline(data.deadline, data.serverNow, data.deadlinePassed, skewRef.current);
@@ -309,9 +350,9 @@ function AppInner() {
     const handleConfirmSubmit = async () => {
       if (!selection.speakingId || !selection.skillsId) return;
       try {
-        // book() enforces the blocklist server-side and returns res.error,
+        // bookDb() enforces the blocklist server-side and returns res.error,
         // which is surfaced below — covers any path that skipped the Step 1 gate.
-        const res = await book({
+        const res = await bookDb(data.email, {
           empCode: step1.empCode,
           fullName: step1.fullName,
           bu: step1.bu,
@@ -438,6 +479,7 @@ function AppInner() {
         {topbar}
         <main className="container">
           <BookingDisplay
+            email={data.email}
             booking={data.myBooking}
             slots={data.slots}
             deadlinePassed={data.deadlinePassed}
@@ -579,11 +621,11 @@ function Step1Form({
     setBlockErr(null);
     setChecking(true);
     try {
-      // Pre-flight blocklist check via GAS (reads the "Ineligibility" sheet).
-      // book() enforces the same list server-side as the hard guarantee.
-      const res = await checkBlocked(empCode);
-      if (res.blocked) {
-        setBlockErr(res.reason || 'Bạn không đủ điều kiện đăng ký kỳ thi này. Vui lòng liên hệ Ban tổ chức.');
+      // Pre-flight blocklist check via Firestore /ineligibility collection.
+      // bookDb() enforces the same list server-side as the hard guarantee.
+      const reason = await checkIneligibility(empCode);
+      if (reason) {
+        setBlockErr(reason);
         return;
       }
       onContinue({ empCode, fullName: fullName.trim(), bu: bu.trim().toUpperCase() });
@@ -1182,6 +1224,7 @@ function SuccessScreen({
 // ─── Booking Display ──────────────────────────────────────────────────────
 
 function BookingDisplay({
+  email,
   booking,
   slots,
   deadlinePassed,
@@ -1190,6 +1233,7 @@ function BookingDisplay({
   onCancelled,
   onError,
 }: {
+  email: string;
   booking: MyBooking;
   slots: Slot[];
   deadlinePassed: boolean;
@@ -1224,7 +1268,7 @@ function BookingDisplay({
     setMenuOpen(false);
     setBusy(true);
     try {
-      const res = await cancel();
+      const res = await cancelDb(email);
       if (!res.ok) onError(res.error || 'Hủy thất bại.');
       else if (res.state) onCancelled(res.state);
       else onError('Đã hủy nhưng không nhận được state mới. Vui lòng tải lại.');
