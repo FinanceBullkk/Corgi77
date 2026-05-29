@@ -306,7 +306,7 @@ label.field span:first-child { display: block; font-size: var(--fs-sm); color: v
 
 /* ─── Section title ──────────────────────────────────────────────────── */
 .sec-title { font-size: var(--fs-xs); font-weight: 700; color: var(--ink-500); text-transform: uppercase; letter-spacing: .08em; margin-bottom: var(--s-3); display: flex; align-items: center; gap: var(--s-2); }
-.sec-title .dot { width: 18px; height: 18px; border-radius: var(--r-xs); background: var(--brand-100); color: var(--brand-700); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+.sec-title .dot { width: 18px; height: 18px; border-radius: var(--r-xs); background: var(--brand-100); color: var(--brand-700); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; overflow: hidden; }
 .sec-title .dot.accent { background: var(--accent-100); color: var(--accent-700); }
 
 /* ─── Banner / Alert ─────────────────────────────────────────────────── */

@@ -1104,7 +1104,7 @@ function ConfirmModal({
       }
     >
       <div className="sec-title">
-        <span className="dot">👤</span>Học viên
+        <span className="dot"><svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="3.2" r="2"/><path d="M1 9c0-2.2 1.8-3.8 4-3.8s4 1.6 4 3.8"/></svg></span>Học viên
       </div>
       <div
         style={{
@@ -1122,7 +1122,7 @@ function ConfirmModal({
       </div>
 
       <div className="sec-title">
-        <span className="dot accent">📅</span>2 ca thi đã chọn
+        <span className="dot accent"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><rect x="1" y="1.5" width="8" height="7.5" rx="1.2"/><line x1="3" y1="0.5" x2="3" y2="2.5"/><line x1="7" y1="0.5" x2="7" y2="2.5"/><line x1="1" y1="4" x2="9" y2="4"/></svg></span>2 ca thi đã chọn
       </div>
       <div className="col mb-4" style={{ gap: 'var(--s-2)' }}>
         {sp && <SlotCard slot={sp} index={1} />}
@@ -1321,7 +1321,7 @@ function BookingDisplay({
       <div className="card">
         <div className="card-hd">
           <div className="sec-title" style={{ marginBottom: 'var(--s-1)' }}>
-            <span className="dot">👤</span>Học viên
+            <span className="dot"><svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="3.2" r="2"/><path d="M1 9c0-2.2 1.8-3.8 4-3.8s4 1.6 4 3.8"/></svg></span>Học viên
           </div>
           <div className="text-sm">
             <b>{booking.fullName}</b> · {booking.empCode} · {booking.bu}
@@ -1329,7 +1329,7 @@ function BookingDisplay({
         </div>
         <div className="card-bd">
           <div className="sec-title">
-            <span className="dot accent">📅</span>2 ca thi
+            <span className="dot accent"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><rect x="1" y="1.5" width="8" height="7.5" rx="1.2"/><line x1="3" y1="0.5" x2="3" y2="2.5"/><line x1="7" y1="0.5" x2="7" y2="2.5"/><line x1="1" y1="4" x2="9" y2="4"/></svg></span>2 ca thi
           </div>
           <div className="col" style={{ gap: 'var(--s-3)' }}>
             {ordered.map((slot, i) => (
