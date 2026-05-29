@@ -684,7 +684,8 @@ function Step1Form({
 
 // ─── Step 2 · Calendar ────────────────────────────────────────────────────
 
-const ROW_H = 56;
+// px per hour row · MUST match --row-h in .cal (styles.css)
+const ROW_H = 64;
 
 function CalendarStep({
   step1,
@@ -819,105 +820,109 @@ function CalendarStep({
           </div>
         </div>
 
-        <div
-          className="cal"
-          style={
-            {
-              '--cal-cols': dates.length || 5,
-              gridTemplateColumns: `52px repeat(${dates.length || 5}, 1fr)`,
-            } as React.CSSProperties
-          }
-        >
-          <div className="cal-head gutter" />
-          {dates.map((date) => {
-            const { abbr, label } = dayHeader(date);
-            return (
-              <div key={date} className="cal-head">
-                <div className="day">{abbr}</div>
-                <div className="date">{label}</div>
-              </div>
-            );
-          })}
+        <div className="cal">
+          {/* Header · sticky day labels */}
+          <div
+            className="cal-header"
+            style={{ gridTemplateColumns: `var(--gutter) repeat(${dates.length || 5}, 1fr)` }}
+          >
+            <div className="cal-corner" />
+            {dates.map((date) => {
+              const { abbr, label } = dayHeader(date);
+              return (
+                <div key={date} className="cal-dayhead">
+                  <span className="dh-day">{abbr}</span>
+                  <span className="dh-date">{label}</span>
+                </div>
+              );
+            })}
+          </div>
 
-          {hours.map((h) => (
-            <Fragment key={h}>
-              <div className={`cal-time${h === firstHour ? ' first' : ''}`}>{String(h).padStart(2, '0')}:00</div>
-              {dates.map((date) => {
-                const blocks = (byDate[date] ?? []).filter(
-                  (s) => Math.floor(s.startMin / 60) === h,
-                );
-                const showLocked =
-                  !!lockedOther && lockedOther.date === date && Math.floor(lockedOther.startMin / 60) === h;
-                return (
-                  <div key={date} className="cal-cell">
-                    {showLocked && lockedOther && (
-                      <div
-                        className={`cal-block locked ${lockedOther.type === 'Speaking' ? 'sp' : 'sk'}`}
-                        style={{
-                          top: ((lockedOther.startMin - h * 60) / 60) * ROW_H + 2,
-                          height: ((lockedOther.endMin - lockedOther.startMin) / 60) * ROW_H - 4,
-                        }}
-                        title={`Ca ${lockedOther.type} đã chọn · chuyển tab để sửa`}
-                      >
-                        <div className="b-time">
-                          {minToHHmm(lockedOther.startMin)}–{minToHHmm(lockedOther.endMin)}
-                        </div>
-                        <div className="b-meta">
-                          <span className="b-loc">{lockedOther.type} đã chọn</span>
-                        </div>
+          {/* Body · gutter + full-height day columns (blocks positioned by minute) */}
+          <div
+            className="cal-body"
+            style={{
+              gridTemplateColumns: `var(--gutter) repeat(${dates.length || 5}, 1fr)`,
+              height: hours.length * ROW_H,
+            }}
+          >
+            <div className="cal-gutter">
+              {hours.map((h, i) => (
+                <span
+                  key={h}
+                  className={`cal-hourlabel${i === 0 ? ' first' : ''}`}
+                  style={{ top: i * ROW_H }}
+                >
+                  {String(h).padStart(2, '0')}:00
+                </span>
+              ))}
+            </div>
+
+            {dates.map((date) => {
+              const showLocked = !!lockedOther && lockedOther.date === date;
+              return (
+                <div key={date} className="cal-col">
+                  {showLocked && lockedOther && (
+                    <div
+                      className={`ev ghost ${lockedOther.type === 'Speaking' ? 'sp' : 'sk'}`}
+                      style={{
+                        top: ((lockedOther.startMin - firstHour * 60) / 60) * ROW_H + 2,
+                        height: ((lockedOther.endMin - lockedOther.startMin) / 60) * ROW_H - 4,
+                      }}
+                      title={`Ca ${lockedOther.type} đã chọn · chuyển tab để sửa`}
+                    >
+                      <div className="ev-time">
+                        {minToHHmm(lockedOther.startMin)}–{minToHHmm(lockedOther.endMin)}
                       </div>
-                    )}
-                    {blocks.map((slot) => {
-                      const st = slotSt(slot, spSel, skSel, curSpId, curSkId);
-                      const topPx = ((slot.startMin - h * 60) / 60) * ROW_H;
-                      const heightPx = ((slot.endMin - slot.startMin) / 60) * ROW_H - 4;
-                      const isSp = slot.type === 'Speaking';
-                      return (
-                        <button
-                          key={slot.slotId}
-                          className={[
-                            'cal-block',
-                            isSp ? 'sp' : 'sk',
-                            st === 'sel' ? 'sel' : '',
-                            st === 'full' ? 'full' : '',
-                            st === 'conflict' ? 'conflict' : '',
-                          ]
-                            .filter(Boolean)
-                            .join(' ')}
-                          style={{ top: topPx + 2, height: heightPx }}
-                          onClick={() => onClickSlot(slot)}
-                          disabled={st === 'full' || st === 'conflict' || deadlinePassed}
-                          title={
-                            st === 'conflict'
-                              ? 'Trùng với ca đã chọn'
-                              : st === 'full'
-                                ? 'Đã hết chỗ'
-                                : `${minToHHmm(slot.startMin)}–${minToHHmm(slot.endMin)} · ${slot.location} · Còn ${slot.remaining}/${slot.capacity}`
-                          }
-                        >
-                          <div className="b-time">
-                            {minToHHmm(slot.startMin)}–{minToHHmm(slot.endMin)}
-                          </div>
-                          <div className="b-meta">
-                            <span className="b-loc">{slot.location.split(' · ')[0]}</span>
-                            {st === 'conflict' ? (
-                              <span className="b-conflict-tag">⚠ Trùng</span>
-                            ) : st === 'full' ? (
-                              <span className="b-rem">Hết</span>
-                            ) : (
-                              <span className="b-rem">
-                                {slot.remaining}/{slot.capacity}
-                              </span>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </Fragment>
-          ))}
+                      <div className="ev-meta">
+                        <span className="ev-room">{lockedOther.type} · đã chọn</span>
+                      </div>
+                    </div>
+                  )}
+                  {(byDate[date] ?? []).map((slot) => {
+                    const st = slotSt(slot, spSel, skSel, curSpId, curSkId);
+                    const topPx = ((slot.startMin - firstHour * 60) / 60) * ROW_H + 2;
+                    const heightPx = ((slot.endMin - slot.startMin) / 60) * ROW_H - 4;
+                    const isSp = slot.type === 'Speaking';
+                    const low =
+                      st === 'ok' && slot.capacity > 0 && slot.remaining / slot.capacity <= 0.3;
+                    return (
+                      <button
+                        key={slot.slotId}
+                        className={['ev', isSp ? 'sp' : 'sk', st === 'sel' ? 'sel' : '', st === 'full' ? 'full' : '', st === 'conflict' ? 'conflict' : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                        style={{ top: topPx, height: heightPx }}
+                        onClick={() => onClickSlot(slot)}
+                        disabled={st === 'full' || st === 'conflict' || deadlinePassed}
+                        title={
+                          st === 'conflict'
+                            ? 'Trùng với ca đã chọn'
+                            : st === 'full'
+                              ? 'Đã hết chỗ'
+                              : `${minToHHmm(slot.startMin)}–${minToHHmm(slot.endMin)} · ${slot.location} · Còn ${slot.remaining}/${slot.capacity}`
+                        }
+                      >
+                        <div className="ev-time">
+                          {minToHHmm(slot.startMin)}–{minToHHmm(slot.endMin)}
+                        </div>
+                        <div className="ev-meta">
+                          <span className="ev-room">{slot.location.split(' · ')[0]}</span>
+                          {st === 'conflict' ? (
+                            <span className="ev-rem">Trùng giờ</span>
+                          ) : st === 'full' ? (
+                            <span className="ev-rem">Hết chỗ</span>
+                          ) : (
+                            <span className={`ev-rem ${low ? 'warn' : ''}`}>Còn {slot.remaining}</span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
