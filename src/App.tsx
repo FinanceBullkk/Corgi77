@@ -200,9 +200,18 @@ function AppInner() {
   }, [pushToast]);
 
   const handleSignOut = useCallback(async () => {
-    if (!window.confirm('Bạn có chắc muốn đăng xuất?')) return;
+    if (!window.confirm('Đăng xuất sẽ thoát toàn bộ tài khoản Google trên trình duyệt này. Tiếp tục?')) return;
     try { await signOutUser(); } catch { /* ignore */ }
-    window.location.reload();
+    const logoutUrl = 'https://accounts.google.com/Logout';
+    // App chạy trong iframe sandbox của GAS → thử điều hướng top frame trước;
+    // nếu sandbox chặn top-nav thì điều hướng ngay trong frame hiện tại.
+    try {
+      if (window.top && window.top !== window.self) {
+        window.top.location.href = logoutUrl;
+        return;
+      }
+    } catch { /* cross-origin/sandbox chặn → fallback dưới đây */ }
+    window.location.href = logoutUrl;
   }, []);
 
   if (loadErr) {
