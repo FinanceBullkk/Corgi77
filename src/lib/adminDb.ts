@@ -87,6 +87,7 @@ export function generateSlotId(type: 'Speaking' | '3 Skills', date: string, star
 export async function adminCreateSlot(
   adminEmail: string,
   payload: Omit<Slot, 'slotId' | 'remaining' | 'display'> & { remaining?: number },
+  excludeSlotId?: string,
 ): Promise<string> {
   const slotId = generateSlotId(payload.type, payload.date, payload.startMin);
   const ref = doc(db, 'slots', slotId);
@@ -100,6 +101,7 @@ export async function adminCreateSlot(
   // KHÔNG cần lane-packing (xem dev_handoff_2/CALENDAR_REDESIGN.md §5.1).
   const clash = (await listSlots()).find(
     (s) =>
+      s.slotId !== excludeSlotId &&
       s.type === payload.type &&
       s.date === payload.date &&
       payload.startMin < s.endMin &&

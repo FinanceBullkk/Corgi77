@@ -599,6 +599,9 @@ function SlotDrawer({
   adminEmail, slot, used, onClose, onSaved,
 }: { adminEmail: string; slot: Slot | null; used: number; onClose: () => void; onSaved: () => void }) {
   const isEdit = !!slot;
+  // type/date/time encode the slotId, so they can only change when the slot
+  // has no registrations (we recreate under a new id + delete the old one).
+  const locked = isEdit && used > 0;
   const [type, setType] = useState<SlotType>(slot?.type ?? 'Speaking');
   const [date, setDate] = useState(slot?.date ?? '');
   const [session, setSession] = useState(slot?.session ?? '');
@@ -615,21 +618,35 @@ function SlotDrawer({
   };
   const onStart = (v: string) => { setStart(v); setEnd(addMin(v, type === 'Speaking' ? 60 : 150)); };
 
-  const previewId = !isEdit && date && start ? generateSlotId(type, date, parseTime(start)) : '';
+  const newId = date && start ? generateSlotId(type, date, parseTime(start)) : '';
+  const rekeying = isEdit && !locked && !!newId && newId !== slot!.slotId;
 
   const save = async () => {
     const cap = parseInt(capacity, 10);
     if (!cap || cap <= 0) { alert('Sức chứa phải > 0'); return; }
+    const startMin = parseTime(start), endMin = parseTime(end);
     setBusy(true);
     try {
-      if (isEdit) {
+      if (locked) {
+        // Has registrations → only capacity/room can change.
         if (cap < used) { alert(`Không thể giảm xuống ${cap} vì đã có ${used} người đăng ký.`); setBusy(false); return; }
         await updateSlot(adminEmail, slot!.slotId, { capacity: cap, remaining: cap - used, location: location.trim() });
       } else {
-        const startMin = parseTime(start), endMin = parseTime(end);
         if (!date) { alert('Chọn ngày'); setBusy(false); return; }
         if (startMin >= endMin) { alert('Giờ bắt đầu phải trước giờ kết thúc'); setBusy(false); return; }
-        await adminCreateSlot(adminEmail, { type, date, session: session.trim(), startMin, endMin, capacity: cap, location: location.trim() });
+        if (isEdit && !rekeying) {
+          // Same type/date/time → in-place update of capacity/room.
+          await updateSlot(adminEmail, slot!.slotId, { capacity: cap, remaining: cap, location: location.trim() });
+        } else {
+          // New slot, or a 0-registration slot whose type/date/time changed:
+          // create under the new id (ignoring self-overlap) then drop the old one.
+          await adminCreateSlot(
+            adminEmail,
+            { type, date, session: session.trim(), startMin, endMin, capacity: cap, location: location.trim() },
+            isEdit ? slot!.slotId : undefined,
+          );
+          if (isEdit) await adminDeleteSlot(adminEmail, slot!.slotId);
+        }
       }
       onSaved();
     } catch (e) { alert((e as Error).message); } finally { setBusy(false); }
@@ -638,7 +655,7 @@ function SlotDrawer({
   return (
     <Drawer
       title={isEdit ? 'Sửa ca thi' : 'Thêm ca thi'}
-      sub={isEdit ? 'Đổi sức chứa · phòng' : 'Tạo ca mới cho kỳ thi'}
+      sub={isEdit ? (locked ? 'Đổi sức chứa · phòng' : 'Đổi mọi trường (chưa có đăng ký)') : 'Tạo ca mới cho kỳ thi'}
       cta={isEdit ? 'Lưu thay đổi' : 'Tạo ca'}
       busy={busy}
       onClose={onClose}
@@ -646,7 +663,7 @@ function SlotDrawer({
     >
       <div className="field">
         <label className="label">Loại ca</label>
-        {isEdit ? (
+        {locked ? (
           <div><span className={`typ ${typClass(type)}`}>{type}</span></div>
         ) : (
           <div className="filter-chips" style={{ display: 'inline-flex' }}>
@@ -657,7 +674,7 @@ function SlotDrawer({
       </div>
       <div className="field">
         <label className="label">Ngày thi</label>
-        {isEdit ? (
+        {locked ? (
           <div className="help">{dowVi(date)} · {formatDateVi(date)} <span className="text-muted">(không đổi được)</span></div>
         ) : (
           <>
@@ -669,11 +686,11 @@ function SlotDrawer({
       <div className="row" style={{ gap: 'var(--s-3)' }}>
         <div className="field" style={{ flex: 1 }}>
           <label className="label">Giờ bắt đầu</label>
-          {isEdit ? <div className="help tnum">{start}</div> : <input className="input" type="time" value={start} onChange={(e) => onStart(e.target.value)} />}
+          {locked ? <div className="help tnum">{start}</div> : <input className="input" type="time" value={start} onChange={(e) => onStart(e.target.value)} />}
         </div>
         <div className="field" style={{ flex: 1 }}>
           <label className="label">Giờ kết thúc</label>
-          {isEdit ? <div className="help tnum">{end}</div> : <input className="input" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />}
+          {locked ? <div className="help tnum">{end}</div> : <input className="input" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />}
         </div>
       </div>
       <div className="row" style={{ gap: 'var(--s-3)' }}>
@@ -686,14 +703,21 @@ function SlotDrawer({
           <input className="input" type="number" min={1} value={capacity} onChange={(e) => setCapacity(e.target.value)} />
         </div>
       </div>
-      {!isEdit && !session && (
+      {!locked && !session && (
         <div className="field">
           <label className="label">Session <span className="opt">(tuỳ chọn)</span></label>
           <input className="input" value={session} onChange={(e) => setSession(e.target.value)} placeholder="AM / PM" />
         </div>
       )}
-      {previewId && <div className="banner info"><div>Mã ca sẽ là <b>{previewId}</b></div></div>}
-      {isEdit && <div className="banner info"><div>Mã ca <b>{slot!.slotId}</b> · đang có <b>{used}</b> đăng ký. Loại/ngày/giờ không thể đổi sau khi tạo.</div></div>}
+      {!isEdit && newId && <div className="banner info"><div>Mã ca sẽ là <b>{newId}</b></div></div>}
+      {locked && <div className="banner info"><div>Mã ca <b>{slot!.slotId}</b> · đang có <b>{used}</b> đăng ký. Vì đã có người đăng ký, không thể đổi loại/ngày/giờ.</div></div>}
+      {isEdit && !locked && (
+        <div className="banner info"><div>
+          {rekeying
+            ? <>Đổi loại/ngày/giờ sẽ tạo mã ca mới <b>{newId}</b> và xoá <b>{slot!.slotId}</b>.</>
+            : <>Mã ca <b>{slot!.slotId}</b> · chưa có đăng ký, có thể đổi mọi trường.</>}
+        </div></div>
+      )}
     </Drawer>
   );
 }
