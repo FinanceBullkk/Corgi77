@@ -799,6 +799,9 @@ function CalendarStep({
   const [activeType, setActiveType] = useState<Slot['type']>(() =>
     selection.speakingId && !selection.skillsId ? '3 Skills' : 'Speaking',
   );
+  const [flashMsg, setFlashMsg] = useState<string | null>(null);
+  const [flashPulse, setFlashPulse] = useState<'sp' | 'sk' | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const tone = activeType === 'Speaking' ? 'sp' : 'sk';
   // The OTHER type's selection — drawn as a dashed "locked" ghost on the active calendar.
   const lockedOther = activeType === 'Speaking' ? skSel : spSel;
@@ -829,7 +832,17 @@ function CalendarStep({
     // After picking a type, auto-switch to the other tab if it is still empty.
     if (isPicking) {
       const otherPicked = slot.type === 'Speaking' ? !!selection.skillsId : !!selection.speakingId;
-      if (!otherPicked) setTimeout(() => setActiveType(slot.type === 'Speaking' ? '3 Skills' : 'Speaking'), 220);
+      if (!otherPicked) {
+        const doneLabel = slot.type === 'Speaking' ? 'Speaking' : '3 Skills';
+        const nextLabel = slot.type === 'Speaking' ? '3 Skills' : 'Speaking';
+        const pulseSide: 'sp' | 'sk' = slot.type === 'Speaking' ? 'sp' : 'sk';
+        // Show flash message and pulse on completed tab
+        setFlashMsg(`Đã chọn ${doneLabel} ✓ — giờ chọn ${nextLabel}`);
+        setFlashPulse(pulseSide);
+        clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = setTimeout(() => { setFlashMsg(null); setFlashPulse(null); }, 2500);
+        setTimeout(() => setActiveType(slot.type === 'Speaking' ? '3 Skills' : 'Speaking'), 300);
+      }
     }
   }
 
@@ -861,6 +874,11 @@ function CalendarStep({
         </p>
       </div>
 
+      {flashMsg && (
+        <div className="flash-msg" role="status" aria-live="polite">
+          {flashMsg}
+        </div>
+      )}
       <div className="type-tabs">
         <TypeTab
           tone="sp"
@@ -871,6 +889,7 @@ function CalendarStep({
           duration="60 phút"
           statusText={spSel ? `${dayHeader(spSel.date).label} · ${minToHHmm(spSel.startMin)}–${minToHHmm(spSel.endMin)}` : 'Click chọn ca'}
           onClick={() => setActiveType('Speaking')}
+          pulse={flashPulse === 'sp'}
         />
         <TypeTab
           tone="sk"
@@ -881,6 +900,7 @@ function CalendarStep({
           duration="150 phút"
           statusText={skSel ? `${dayHeader(skSel.date).label} · ${minToHHmm(skSel.startMin)}–${minToHHmm(skSel.endMin)}` : 'Click chọn ca'}
           onClick={() => setActiveType('3 Skills')}
+          pulse={flashPulse === 'sk'}
         />
       </div>
 
@@ -1030,6 +1050,7 @@ function TypeTab({
   duration,
   statusText,
   onClick,
+  pulse,
 }: {
   tone: 'sp' | 'sk';
   num: string;
@@ -1039,10 +1060,11 @@ function TypeTab({
   duration: string;
   statusText: string;
   onClick: () => void;
+  pulse?: boolean;
 }) {
   return (
     <button
-      className={`type-tab ${tone} ${active ? 'active' : ''} ${picked ? 'picked' : ''}`}
+      className={`type-tab ${tone} ${active ? 'active' : ''} ${picked ? 'picked' : ''} ${pulse ? 'pulse' : ''}`}
       onClick={onClick}
       aria-pressed={active}
     >
