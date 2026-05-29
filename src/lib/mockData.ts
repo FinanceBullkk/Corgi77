@@ -1,4 +1,4 @@
-import type { BookPayload, BookResult, CancelResult, InitResult, Slot } from './gas';
+import type { BlockCheck, BookPayload, BookResult, CancelResult, InitResult, Slot } from './gas';
 
 const STORAGE_KEY = 'mock_booking_state_v1';
 
@@ -80,6 +80,18 @@ function withRemaining(state: MockState): Slot[] {
 const MOCK_EMAIL = 'hao.nha@cyberlogitec.com';
 const MOCK_DEADLINE = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
+// Dev-only blocklist, mirrors the GAS "Ineligibility" sheet (gas/Code.js).
+// Lets us test the "Danh sách chặn" feature end-to-end in the mock environment.
+const MOCK_BLOCKLIST: Record<string, string> = {
+  '222222': 'Bạn không đủ điều kiện đăng ký kỳ thi này (Mã NV bị chặn). Vui lòng liên hệ Ban tổ chức.',
+};
+
+export async function mockCheckBlocked(empCode: string): Promise<BlockCheck> {
+  await delay(150);
+  const reason = MOCK_BLOCKLIST[String(empCode || '').trim()];
+  return reason ? { blocked: true, reason } : { blocked: false };
+}
+
 export async function mockInit(): Promise<InitResult> {
   await delay(200);
   const s = loadState();
@@ -109,6 +121,11 @@ export async function mockInit(): Promise<InitResult> {
 
 export async function mockBook(payload: BookPayload): Promise<BookResult> {
   await delay(400);
+
+  // Blocklist guard — mirrors GAS book() server-side enforcement.
+  const blockReason = MOCK_BLOCKLIST[String(payload.empCode || '').trim()];
+  if (blockReason) return { ok: false, error: blockReason };
+
   const state = loadState();
   const slots = withRemaining(state);
   const byId = Object.fromEntries(slots.map((s) => [s.slotId, s]));

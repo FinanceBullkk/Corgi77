@@ -3,6 +3,7 @@ import type { ErrorInfo, ReactNode } from 'react';
 import {
   book,
   cancel,
+  checkBlocked,
   formatDateVi,
   init,
   minToHHmm,
@@ -308,6 +309,8 @@ function AppInner() {
     const handleConfirmSubmit = async () => {
       if (!selection.speakingId || !selection.skillsId) return;
       try {
+        // book() enforces the blocklist server-side and returns res.error,
+        // which is surfaced below — covers any path that skipped the Step 1 gate.
         const res = await book({
           empCode: step1.empCode,
           fullName: step1.fullName,
@@ -562,6 +565,7 @@ function Step1Form({
   const [fullName, setFullName] = useState(initial.fullName);
   const [bu, setBu] = useState(initial.bu);
   const [checking, setChecking] = useState(false);
+  const [blockErr, setBlockErr] = useState<string | null>(null);
 
   const empValid = /^\d{6}$/.test(empCode);
   const nameValid = fullName.trim().length >= 2;
@@ -569,14 +573,23 @@ function Step1Form({
   const allValid = empValid && nameValid && buValid;
   const validCount = [empValid, nameValid, buValid].filter(Boolean).length;
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!allValid) return;
+    if (!allValid || checking) return;
+    setBlockErr(null);
     setChecking(true);
-    setTimeout(() => {
-      setChecking(false);
+    try {
+      // Pre-flight blocklist check via GAS (reads the "Ineligibility" sheet).
+      // book() enforces the same list server-side as the hard guarantee.
+      const res = await checkBlocked(empCode);
+      if (res.blocked) {
+        setBlockErr(res.reason || 'Bạn không đủ điều kiện đăng ký kỳ thi này. Vui lòng liên hệ Ban tổ chức.');
+        return;
+      }
       onContinue({ empCode, fullName: fullName.trim(), bu: bu.trim().toUpperCase() });
-    }, 400);
+    } finally {
+      setChecking(false);
+    }
   }
 
   return (
@@ -600,7 +613,7 @@ function Step1Form({
               className={`input ${empCode && !empValid ? 'error' : ''}`}
               placeholder="VD: 262010"
               value={empCode}
-              onChange={(e) => setEmpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              onChange={(e) => { setEmpCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setBlockErr(null); }}
               inputMode="numeric"
               maxLength={6}
               autoFocus
@@ -638,6 +651,15 @@ function Step1Form({
             />
             <span className="help">Mã phòng ban / BU của bạn (chữ hoa)</span>
           </div>
+
+          {blockErr && (
+            <div className="banner danger" style={{ marginTop: 'var(--s-4)' }}>
+              <span className="banner-icon">⛔</span>
+              <div>
+                <b>Không thể tiếp tục.</b> {blockErr}
+              </div>
+            </div>
+          )}
         </div>
         <div className="card-ft">
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

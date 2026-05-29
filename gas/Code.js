@@ -10,6 +10,7 @@ const SHEETS = {
   REGS: 'Registrations',
   CONFIG: 'Config',
   ELIGIBILITY: 'Eligibility',
+  INELIGIBILITY: 'Ineligibility',
   AUDIT_LOG: 'AuditLog',
 };
 
@@ -180,6 +181,45 @@ function readEligibility_() {
   });
 }
 
+/**
+ * Đọc danh sách chặn (blocklist) theo Mã NV. Trả {} nếu sheet không tồn tại
+ * (backward compatible — không có sheet = không chặn ai).
+ * Sheet "Ineligibility": cột A = Mã NV (6 số), cột B = Lý do (tùy chọn).
+ * Trả map { empCode: reason } để tra cứu O(1).
+ */
+function readIneligibility_() {
+  var ss = SpreadsheetApp.getActive();
+  if (!ss) return {};
+  var sh = ss.getSheetByName(SHEETS.INELIGIBILITY);
+  if (!sh) return {};
+  var rows = sh.getDataRange().getValues().slice(1);
+  var map = {};
+  for (var i = 0; i < rows.length; i++) {
+    var code = String(rows[i][0] || '').trim();
+    if (!code) continue;
+    map[code] = String(rows[i][1] || '').trim();
+  }
+  return map;
+}
+
+/**
+ * Pre-flight blocklist check cho Step 1 (gọi qua google.script.run trước khi
+ * người dùng chọn ca). book() enforce lại danh sách này như chốt chặn cứng.
+ * Trả { blocked: boolean, reason?: string }.
+ */
+function checkBlocked(empCode) {
+  var code = String(empCode || '').trim();
+  if (!/^\d{6}$/.test(code)) return { blocked: false };
+  var blockMap = readIneligibility_();
+  if (Object.prototype.hasOwnProperty.call(blockMap, code)) {
+    return {
+      blocked: true,
+      reason: blockMap[code] || 'Bạn không đủ điều kiện đăng ký kỳ thi này. Vui lòng liên hệ Ban tổ chức.',
+    };
+  }
+  return { blocked: false };
+}
+
 // countBooked_ + evaluateBooking_ định nghĩa ở booking-core.js (cùng project GAS khi push).
 
 function buildState_(email, slots, regs, cfg) {
@@ -317,6 +357,16 @@ function book(payload) {
       audit_('book.rejected.not_eligible', email, {});
       return { ok: false, error: 'Bạn không nằm trong danh sách đăng ký thi. Vui lòng liên hệ Ban tổ chức.' };
     }
+  }
+
+  // ── Blocklist check (danh sách chặn theo Mã NV) ──
+  var blockMap = readIneligibility_();
+  if (Object.prototype.hasOwnProperty.call(blockMap, empCode)) {
+    audit_('book.rejected.blocked', email, { empCode: empCode });
+    return {
+      ok: false,
+      error: blockMap[empCode] || 'Bạn không đủ điều kiện đăng ký kỳ thi này. Vui lòng liên hệ Ban tổ chức.',
+    };
   }
 
   var lock = LockService.getScriptLock();

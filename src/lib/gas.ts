@@ -1,6 +1,6 @@
-import { mockBook, mockCancel, mockInit } from './mockData';
+import { mockBook, mockCancel, mockCheckBlocked, mockInit } from './mockData';
 
-type GasFn = 'init' | 'book' | 'cancel';
+type GasFn = 'init' | 'book' | 'cancel' | 'checkBlocked';
 
 declare global {
   interface Window {
@@ -21,6 +21,7 @@ function callGas<T>(fn: GasFn, ...args: unknown[]): Promise<T> {
     if (fn === 'init') return mockInit() as Promise<T>;
     if (fn === 'book') return mockBook(args[0] as any) as Promise<T>;
     if (fn === 'cancel') return mockCancel() as Promise<T>;
+    if (fn === 'checkBlocked') return mockCheckBlocked(args[0] as string) as Promise<T>;
     return Promise.reject(new Error(`Unknown mock fn: ${fn}`));
   }
 
@@ -96,9 +97,22 @@ export interface CancelResult {
   state?: InitResult;
 }
 
+/** Result of a blocklist pre-flight check by empCode. */
+export interface BlockCheck {
+  blocked: boolean;
+  reason?: string;
+}
+
 export const init = () => callGas<InitResult>('init');
 export const book = (payload: BookPayload) => callGas<BookResult>('book', payload);
 export const cancel = () => callGas<CancelResult>('cancel');
+
+/**
+ * Pre-flight blocklist check (Step 1 → Step 2 gate). Reads the GAS
+ * "Ineligibility" sheet server-side; book() enforces the same list as the
+ * hard guarantee. Returns { blocked:false } for any non-6-digit code.
+ */
+export const checkBlocked = (empCode: string) => callGas<BlockCheck>('checkBlocked', empCode);
 
 export function overlaps(a: Slot, b: Slot): boolean {
   return a.date === b.date && a.startMin < b.endMin && a.endMin > b.startMin;
