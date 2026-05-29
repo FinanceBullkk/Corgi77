@@ -224,6 +224,7 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
   if (blockReason) return { ok: false, error: blockReason };
 
   // Tracking vars set inside transaction (transactions may retry — final values win).
+  let noChange = false; // F13: true when user submits same slots → skip all writes
   let isUpdate = false;
   let prevSpId: string | null = null;
   let prevSkId: string | null = null;
@@ -233,8 +234,15 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
 
   try {
     await runTransaction(db, async (tx) => {
-      // Config
-      const cfgSnap = await tx.get(doc(db, 'config', 'main'));
+      // ── READS 1: config + existing reg + saved quota (parallel) ──
+      const regRef = doc(db, 'registrations', email);
+      const quotaRef = doc(db, 'cancelledQuota', email);
+      const [cfgSnap, regSnap, quotaSnap] = await Promise.all([
+        tx.get(doc(db, 'config', 'main')),
+        tx.get(regRef),
+        tx.get(quotaRef),
+      ]);
+
       const cfg = cfgSnap.exists() ? cfgSnap.data() : {};
       if (cfg.allowEnrollment === false)
         throw new Error('Đăng ký hiện đang bị khoá. Vui lòng liên hệ Ban tổ chức.');
@@ -243,7 +251,17 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       if (cfg.deadline && new Date() > (cfg.deadline as Timestamp).toDate())
         throw new Error('Đã hết hạn đăng ký.');
 
-      // Slots
+      const oldReg = regSnap.exists() ? regSnap.data() : null;
+      const oldSpId: string | null = oldReg?.speakingSlotId ?? null;
+      const oldSkId: string | null = oldReg?.skillsSlotId ?? null;
+
+      // F13: user confirmed without changing slots → no-op, no quota consumed
+      if (oldReg && speakingSlotId === oldSpId && skillsSlotId === oldSkId) {
+        noChange = true;
+        return;
+      }
+
+      // ── READS 2: slots ──
       const spRef = doc(db, 'slots', speakingSlotId);
       const skRef = doc(db, 'slots', skillsSlotId);
       const [spSnap, skSnap] = await Promise.all([tx.get(spRef), tx.get(skRef)]);
@@ -260,18 +278,15 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       if (sp.date === sk.date && sp.startMin < sk.endMin && sp.endMin > sk.startMin)
         throw new Error('Hai ca thi bị trùng giờ. Vui lòng chọn 2 ca không trùng.');
 
-      // Existing registration
-      const regRef = doc(db, 'registrations', email);
-      const regSnap = await tx.get(regRef);
-      const oldReg = regSnap.exists() ? regSnap.data() : null;
-      const oldSpId: string | null = oldReg?.speakingSlotId ?? null;
-      const oldSkId: string | null = oldReg?.skillsSlotId ?? null;
-
-      // Change limit
-      const changeCount = oldReg ? (oldReg.changeCount ?? 0) + 1 : 0;
+      // F14: quota preserved across cancel+re-register (cancelDb saves quota on cancel)
+      const savedQuota = quotaSnap.exists() ? Math.max(0, (quotaSnap.data().changeCount as number) ?? 0) : null;
+      // Base count: from active reg, or from saved quota after cancel, or 0 for first booking
+      const baseCount = oldReg ? Math.max(0, oldReg.changeCount ?? 0) : (savedQuota ?? 0);
+      // Increment only when changing an existing booking's slots; re-register after cancel doesn't cost a change
+      const changeCount = oldReg ? baseCount + 1 : baseCount;
       const maxChanges = typeof cfg.maxChanges === 'number' ? cfg.maxChanges : 3;
       if (oldReg && changeCount > maxChanges)
-        throw new Error(`Bạn đã đổi ca ${oldReg.changeCount} lần (tối đa ${maxChanges} lần). Liên hệ Ban tổ chức.`);
+        throw new Error(`Bạn đã đổi ca ${baseCount} lần (tối đa ${maxChanges} lần). Liên hệ Ban tổ chức.`);
 
       // Capacity check
       const spAvail = sp.remaining + (oldSpId === sp.slotId ? 1 : 0);
@@ -301,6 +316,9 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       if (oldSpId !== sp.slotId) tx.update(spRef, { remaining: spAvail - 1 });
       if (oldSkId !== sk.slotId) tx.update(skRef, { remaining: skAvail - 1 });
 
+      // Consume saved quota doc if it was used for this booking (F14)
+      if (quotaSnap.exists()) tx.delete(quotaRef);
+
       // Write registration
       const now = Timestamp.now();
       tx.set(regRef, {
@@ -323,6 +341,12 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       bookedSp = sp;
       bookedSk = sk;
     });
+
+    // F13: same slots confirmed → no writes happened, just return current state
+    if (noChange) {
+      try { return { ok: true, state: await initDb(email) }; }
+      catch { return { ok: true }; }
+    }
 
     // ── Post-transaction side effects (non-blocking) ────────────────────
     void auditLog(email, isUpdate ? 'book.update' : 'book.create', {
@@ -397,6 +421,11 @@ export async function cancelDb(email: string): Promise<CancelResult> {
         tx.update(doc(db, 'slots', reg.skillsSlotId), { remaining: skRemaining + 1 });
 
       tx.delete(regRef);
+      // F14: preserve quota so cancel+re-register can't reset change limit
+      tx.set(doc(db, 'cancelledQuota', email), {
+        changeCount: reg.changeCount ?? 0,
+        cancelledAt: Timestamp.now(),
+      });
       cancelled = true;
     });
 

@@ -1,8 +1,8 @@
 # 📊 Báo Cáo Kết Quả Test — Corgi7 Booking System
 
 **Ngày:** 29/05/2026  
-**Thời gian chạy:** ~2.5s  
-**Tổng kết quả:** ✅ **97/97 PASSED** — 0 FAILED
+**Thời gian chạy:** ~3.0s  
+**Tổng kết quả:** ✅ **139/139 PASSED** — 0 FAILED
 
 ---
 
@@ -10,11 +10,11 @@
 
 | Tiêu chí | Giá trị |
 |---|---|
-| Test Files | 5 passed / 5 total |
-| Test Cases | 97 passed / 97 total |
-| Test Coverage | Business logic layer (DB, Admin, Audit, Types) |
+| Test Files | 6 passed / 6 total |
+| Test Cases | 139 passed / 139 total |
+| Test Coverage | Business logic layer (DB, Admin, Audit, Types, Security) |
 | Framework | Vitest 4.1.7 + jsdom |
-| Thời gian chạy | ~1.87s |
+| Thời gian chạy | ~3.0s |
 
 ---
 
@@ -78,7 +78,7 @@
 ---
 
 ### 4️⃣ `db.test.ts` — User Booking Flow + Concurrency
-**Trạng thái:** ✅ 35/35 PASSED
+**Trạng thái:** ✅ 38/38 PASSED
 
 #### 4a. checkIneligibility() — Kiểm tra điều kiện
 | ID | Use Case | Kết quả |
@@ -138,6 +138,13 @@
 | UC-DB33 | User book slot bị admin xóa trong transaction → phát hiện slot không hợp lệ | ✅ |
 | UC-DB34 | User đổi slot đồng thời admin hủy đăng ký → transaction thấy trạng thái consistent | ✅ |
 | UC-DB35 | Transaction bị Firestore contention → xử lý lỗi gracefully | ✅ |
+
+#### 4g. bookDb() — Stress Test (20 người đăng ký cùng lúc)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| UC-DB36 | 20 người đăng ký cùng 1 slot capacity=10 → 10 thành công, 10 thất bại | ✅ |
+| UC-DB37 | 20 người đăng ký 10 slot khác nhau (2 người/slot, capacity=5) → tất cả thành công | ✅ |
+| UC-DB38 | 20 người cùng giành slot capacity=1 → đúng 1 thành công, 19 thất bại | ✅ |
 
 ---
 
@@ -212,17 +219,123 @@
 | **Edge Case** | 18 | Ranh giới: capacity=0, giờ trùng nhau, ngày nhuận, 23:59 |
 | **Error Handling** | 12 | Network failure, transaction failure, non-blocking errors |
 | **Permission/Access** | 10 | Admin check, eligibility, blocklist, enrollment lock |
-| **Tổng** | **97** | |
+| **Tổng** | **100** | |
+
+---
+
+### 6️⃣ `security.test.ts` — Security Attack Simulation
+**Trạng thái:** ✅ 39/39 PASSED
+
+#### 6a. XSS & Injection Attacks (SEC-01 → SEC-07)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-01 | Script injection trong fullName → escHtml() neutralize | ✅ |
+| SEC-02 | HTML injection qua empCode → validation từ chối non-numeric | ✅ |
+| SEC-03 | Script injection qua bu → email template escape | ✅ |
+| SEC-04 | Prototype pollution qua crafted slotId → type check từ chối | ✅ |
+| SEC-05 | NoSQL injection qua empCode → validation từ chối non-6-digit | ✅ |
+| SEC-06 | Unicode fullwidth digits trong empCode → bị từ chối | ✅ |
+| SEC-07 | Null byte injection trong slot IDs → slot không tồn tại | ✅ |
+
+#### 6b. Privilege Escalation (SEC-08 → SEC-12)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-08 | Non-admin gọi adminCreateSlot() → audit trail ghi lại attacker email | ✅ |
+| SEC-09 | Non-admin xóa registration → audit trail được tạo | ✅ |
+| SEC-10 | Attacker thêm mình vào adminEmails → Firestore rules chặn | ✅ |
+| SEC-11 | Đăng ký với victim email → Firestore rule enforce auth.token.email | ✅ |
+| SEC-12 | Admin email homograph / case attacks → bị từ chối | ✅ |
+
+#### 6c. IDOR & Parameter Tampering (SEC-13 → SEC-17)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-13 | Attacker hủy registration victim → Firestore rule chặn | ✅ |
+| SEC-14 | Slot type mismatch → bị từ chối | ✅ |
+| SEC-15 | Double-cancel để inflate remaining → lần 2 thất bại | ✅ |
+| SEC-16 | Negative remaining injection qua updateSlot() → Firestore rule chặn | ✅ |
+| SEC-17 | Capacity=0 để chặn bookings → Firestore rule chặn | ✅ |
+
+#### 6d. Boundary Abuse (SEC-18 → SEC-21)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-18 | 100KB fullName → không crash, Firestore reject doc quá lớn | ✅ |
+| SEC-19 | empCode với leading/trailing spaces → trim đúng | ✅ |
+| SEC-20 | Negative changeCount → bypasses maxChanges (**vulnerability found!**) | ✅ |
+| SEC-21 | Hai slot cùng giờ nhưng khác ngày → không overlap | ✅ |
+
+#### 6e. Email Spoofing (SEC-22 → SEC-24)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-22 | Email "to" field từ server, không từ user payload | ✅ |
+| SEC-23 | XSS trong email subject → không thể (static template) | ✅ |
+| SEC-24 | Audit log email field có thể bị spoof → audit ghi đúng email truyền vào | ✅ |
+
+#### 6f. Deadline & Clock Manipulation (SEC-25 → SEC-27)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-25 | User đổi system clock để bypass deadline → Firestore dùng server time | ✅ |
+| SEC-26 | Deadline=null trong config → enrollment vẫn mở | ✅ |
+| SEC-27 | allowEnrollment=false + no deadline → bị chặn bởi flag | ✅ |
+
+#### 6g. Data Exfiltration (SEC-28 → SEC-30)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-28 | Eligibility list scrape → yêu cầu admin | ✅ |
+| SEC-29 | Ineligibility list scrape → yêu cầu admin | ✅ |
+| SEC-30 | Registration data scrape → user chỉ đọc được registration của mình | ✅ |
+
+#### 6h. Audit Tampering (SEC-31 → SEC-33)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-31 | Attacker sửa audit log → bị chặn bởi rules | ✅ |
+| SEC-32 | Attacker xóa audit log → bị chặn bởi rules | ✅ |
+| SEC-33 | Non-admin đọc audit logs → bị chặn bởi rules | ✅ |
+
+#### 6i. CSV Injection (SEC-34 → SEC-36)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-34 | Formula injection trong CSV export qua malicious empCode | ✅ |
+| SEC-35 | CSV injection qua malicious fullName với newlines | ✅ |
+| SEC-36 | CSV export với malicious BU field - formula không có quotes bypass csv() | ✅ |
+
+#### 6j. Denial-of-Service Vectors (SEC-37 → SEC-39)
+| ID | Use Case | Kết quả |
+|---|---|---|
+| SEC-37 | Rapid-fire booking calls (rate limiting) | ✅ |
+| SEC-38 | Extremely large slot list → initDb xử lý gracefully | ✅ |
+| SEC-39 | Repeated checkIneligibility calls → non-blocking, no memory leak | ✅ |
+
+---
+
+## Phân Loại Theo Loại Test
+
+| Loại | Số lượng | Mô tả |
+|---|---|---|
+| **Happy Path** | 28 | Luồng thành công: đăng ký, hủy, đổi, tạo slot, CRUD |
+| **Validation** | 22 | Kiểm tra đầu vào không hợp lệ, định dạng sai |
+| **Edge Case** | 18 | Ranh giới: capacity=0, giờ trùng nhau, ngày nhuận, 23:59 |
+| **Error Handling** | 12 | Network failure, transaction failure, non-blocking errors |
+| **Permission/Access** | 10 | Admin check, eligibility, blocklist, enrollment lock |
+| **Concurrency** | 7 | Nhiều người đăng ký cùng lúc, double-click, contention |
+| **Stress Test** | 3 | 20 người đăng ký đồng thời trên capacity khác nhau |
+| **Security Attack** | 39 | XSS, Injection, Privilege Escalation, IDOR, DoS, CSV Injection |
+| **Tổng** | **139** | |
 
 ---
 
 ## Kết Luận
 
-✅ **Tất cả 97 use cases đều PASS.**  
-Hệ thống business logic đã được kiểm tra toàn diện bao gồm:
+✅ **Tất cả 139 use cases đều PASS.**
+Hệ thống đã được kiểm tra toàn diện bao gồm:
 - Validation đầu vào
 - Logic nghiệp vụ đặt/hủy/đổi chỗ
 - Kiểm soát quyền truy cập (admin, eligibility, blocklist)
 - Xử lý lỗi và edge cases
 - Audit logging
 - **Concurrency**: Nhiều người đăng ký cùng lúc, double-click, admin xóa slot trong khi user book, contention
+- **Stress Test**: 20 người đăng ký đồng thời trên capacity=10, capacity=1, và nhiều slot khác nhau
+- **Security Attack Simulation**: 39 test cases mô phỏng 10 loại tấn công phổ biến (XSS, Injection, Privilege Escalation, IDOR, Boundary Abuse, Email Spoofing, Clock Manipulation, Data Exfiltration, Audit Tampering, CSV Injection, DoS)
+
+### ⚠️ Vulnerability Found
+- **SEC-20**: Negative `changeCount` có thể bypass giới hạn `maxChanges` nếu attacker có quyền sửa trực tiếp document trong Firestore. Khuyến nghị: validate `changeCount >= 0` trong transaction.
+- **SEC-36**: CSV `csv()` helper không escape formula prefix (`=`, `+`, `-`, `@`) → có thể bị exploit trong Excel. Khuyến nghị: prepend `'` hoặc `\t` cho giá trị bắt đầu bằng ký tự formula.

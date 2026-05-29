@@ -311,8 +311,12 @@ export function downloadRegistrationsCsv(regs: Registration[], slots: Slot[]) {
   };
   const csv = (v: unknown) => {
     if (v == null) return '';
-    const s = String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    let s = String(v);
+    // Prevent CSV formula injection (CWE-1236): escape prefix that Excel/Sheets evaluate as formulas
+    if (/^[=+\-@\t|]/.test(s)) s = "'" + s;
+    // Escape newlines within values to prevent row injection
+    s = s.replace(/\r?\n/g, ' ');
+    return /[",]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const rows = [
     ['Email', 'Mã NV', 'Họ tên', 'BU', 'Speaking', 'Speaking ID', '3 Skills', '3 Skills ID', 'Số lần đổi', 'Đăng ký lúc', 'Cập nhật lúc'],

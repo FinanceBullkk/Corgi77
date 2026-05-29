@@ -179,6 +179,12 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ─── Cancelled Quota (quota preserved across cancel+re-register) ─────
+    // Written by cancelDb, read+deleted by bookDb. Owner-scoped only.
+    match /cancelledQuota/{email} {
+      allow read, write: if request.auth != null && request.auth.token.email == email;
+    }
+
     // ─── Mail (Firebase Send-Email extension queue) ─────────────────────
     // Read: admin only
     // Create: any signed-in user (confirmation emails written from booking)
