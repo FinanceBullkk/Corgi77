@@ -1,14 +1,16 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   backfillEmpCodeClaims,
   listIneligibility,
-  listRegistrations,
+  listRegistrationsPage,
   listSlots,
+  type RegistrationPageCursor,
   type IneligibilityEntry,
   type Registration,
 } from './lib/adminDb';
 import { type Slot } from './lib/types';
 import { loadConfig, initials, NAV, HEADER, type Tab, type ConfigState } from './admin/admin-utils';
+import { captureError } from './lib/monitoring';
 import { NavIcon } from './admin/admin-icons';
 import { Overview } from './admin/overview-tab';
 import { RegistrationsTab, type ClaimSyncState } from './admin/registrations-tab';
@@ -23,25 +25,32 @@ export function AdminPanel({ adminEmail, onExit }: { adminEmail: string; onExit:
   const [tab, setTab] = useState<Tab>('overview');
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [regs, setRegs] = useState<Registration[] | null>(null);
+  const [regsTotal, setRegsTotal] = useState<number | null>(null);
+  const [regsCursor, setRegsCursor] = useState<RegistrationPageCursor | null>(null);
+  const [regsLoadingMore, setRegsLoadingMore] = useState(false);
   const [cfg, setCfg] = useState<ConfigState | null>(null);
   const [inelig, setInelig] = useState<IneligibilityEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [claimSync, setClaimSync] = useState<ClaimSyncState>({ status: 'idle' });
+  const didBackfill = useRef(false);
 
+  // Full reload of all collections — used on mount, manual "Tải lại", and error retry.
   useEffect(() => {
     let cancelled = false;
     setErr(null);
-    Promise.all([listSlots(), listRegistrations(), loadConfig(), listIneligibility()])
-      .then(([s, r, c, i]) => {
+    Promise.all([listSlots(), listRegistrationsPage(), loadConfig(), listIneligibility()])
+      .then(([s, regPage, c, i]) => {
         if (cancelled) return;
-        setSlots(s); setRegs(r); setCfg(c); setInelig(i);
-        if (r.length === 0) {
-          setClaimSync({ status: 'idle' });
-          return;
-        }
+        setSlots(s); setRegs(regPage.items); setRegsTotal(regPage.total); setRegsCursor(regPage.nextCursor); setCfg(c); setInelig(i);
+        // EmpCode-claim backfill is a server callable (repairEmpCodeClaimsNow):
+        // run it ONCE per admin session (not on every reload) to avoid redundant
+        // Cloud Function invocations.
+        if (didBackfill.current) return;
+        didBackfill.current = true;
+        if (regPage.total === 0) { setClaimSync({ status: 'idle' }); return; }
         setClaimSync({ status: 'running' });
-        return backfillEmpCodeClaims(adminEmail)
+        backfillEmpCodeClaims(adminEmail)
           .then((result) => {
             if (cancelled) return;
             const needsAttention = result.skippedDuplicates.length > 0 || result.conflicts.length > 0;
@@ -57,10 +66,52 @@ export function AdminPanel({ adminEmail, onExit }: { adminEmail: string; onExit:
     return () => { cancelled = true; };
   }, [adminEmail, reloadKey]);
 
-  const reload = () => setReloadKey((n) => n + 1);
+  const reload = useCallback(() => setReloadKey((n) => n + 1), []);
+
+  // Targeted refetchers — a mutation in one tab only re-reads the affected
+  // collection(s) instead of reloading all four (cuts Firestore read cost).
+  const reloadSlots = useCallback(async () => {
+    try { setSlots(await listSlots()); }
+    catch (e) { captureError(e, { operation: 'admin.reloadSlots' }); }
+  }, []);
+  const reloadRegs = useCallback(async () => {
+    try {
+      const page = await listRegistrationsPage();
+      setRegs(page.items);
+      setRegsTotal(page.total);
+      setRegsCursor(page.nextCursor);
+    }
+    catch (e) { captureError(e, { operation: 'admin.reloadRegs' }); }
+  }, []);
+  const loadMoreRegs = useCallback(async () => {
+    if (!regsCursor || regsLoadingMore) return;
+    setRegsLoadingMore(true);
+    try {
+      const page = await listRegistrationsPage(regsCursor);
+      setRegs((prev) => [...(prev ?? []), ...page.items]);
+      setRegsTotal(page.total);
+      setRegsCursor(page.nextCursor);
+    } catch (e) {
+      captureError(e, { operation: 'admin.loadMoreRegs' });
+    } finally {
+      setRegsLoadingMore(false);
+    }
+  }, [regsCursor, regsLoadingMore]);
+  const reloadConfig = useCallback(async () => {
+    try { setCfg(await loadConfig()); }
+    catch (e) { captureError(e, { operation: 'admin.reloadConfig' }); }
+  }, []);
+  const reloadInelig = useCallback(async () => {
+    try { setInelig(await listIneligibility()); }
+    catch (e) { captureError(e, { operation: 'admin.reloadInelig' }); }
+  }, []);
+  // Cancelling a registration also restores slot.remaining → refresh both.
+  const reloadRegsAndSlots = useCallback(() => {
+    void reloadRegs(); void reloadSlots();
+  }, [reloadRegs, reloadSlots]);
 
   const counts: Partial<Record<Tab, number>> = {
-    registrations: regs?.length,
+    registrations: regsTotal ?? regs?.length,
     slots: slots?.length,
     ineligibility: inelig?.length,
   };
@@ -78,11 +129,11 @@ export function AdminPanel({ adminEmail, onExit }: { adminEmail: string; onExit:
     content = <div className="loading"><span className="spinner" /> Đang tải…</div>;
   } else {
     switch (tab) {
-      case 'overview': content = <Overview slots={slots} regs={regs} allowEnrollment={cfg.allowEnrollment} />; break;
-      case 'registrations': content = <RegistrationsTab adminEmail={adminEmail} slots={slots} regs={regs} onReload={reload} claimSync={claimSync} />; break;
-      case 'slots': content = <SlotsTab adminEmail={adminEmail} slots={slots} regs={regs} allowEnrollment={cfg.allowEnrollment} onReload={reload} />; break;
-      case 'ineligibility': content = <IneligibilityTab adminEmail={adminEmail} inelig={inelig} onReload={reload} />; break;
-      case 'config': content = <ConfigTab adminEmail={adminEmail} cfg={cfg} onReload={reload} />; break;
+      case 'overview': content = <Overview slots={slots} regTotal={regsTotal ?? regs.length} allowEnrollment={cfg.allowEnrollment} />; break;
+      case 'registrations': content = <RegistrationsTab adminEmail={adminEmail} slots={slots} regs={regs} regsTotal={regsTotal ?? regs.length} hasMoreRegs={Boolean(regsCursor)} regsLoadingMore={regsLoadingMore} onLoadMore={loadMoreRegs} onReload={reloadRegsAndSlots} claimSync={claimSync} />; break;
+      case 'slots': content = <SlotsTab adminEmail={adminEmail} slots={slots} allowEnrollment={cfg.allowEnrollment} onReload={reloadSlots} />; break;
+      case 'ineligibility': content = <IneligibilityTab adminEmail={adminEmail} inelig={inelig} onReload={reloadInelig} />; break;
+      case 'config': content = <ConfigTab adminEmail={adminEmail} cfg={cfg} onReload={reloadConfig} />; break;
       case 'audit': content = <AuditTab slots={slots} />; break;
     }
   }

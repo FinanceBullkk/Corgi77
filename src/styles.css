@@ -637,7 +637,7 @@ label.field span:first-child { display: block; font-size: var(--fs-sm); color: v
 .input.dt { width: 230px; height: 42px; }
 .input.textarea { height: auto; min-height: 92px; padding: var(--s-3); line-height: var(--lh-base); resize: vertical; width: 100%; font-family: var(--font-mono); font-size: var(--fs-sm); }
 
-/* ─── Admin chips (hardcoded bootstrap admins) ─────────────────────────── */
+/* ─── Admin chips ──────────────────────────────────────────────────────── */
 .admin-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-2); }
 .admin-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; background: var(--ink-50); border: 1px solid var(--ink-150); border-radius: var(--r-pill); font-size: var(--fs-sm); color: var(--ink-700); font-variant-numeric: tabular-nums; }
 .admin-chip .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--brand-100); color: var(--brand-700); font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }

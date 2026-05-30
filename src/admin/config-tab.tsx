@@ -168,8 +168,8 @@ export function ConfigTab({
 
         <div className="set-row stacked">
           <div className="set-info">
-            <div className="set-label">Admin email bổ sung</div>
-            <div className="set-desc">Mỗi dòng 1 email. Những tài khoản này sẽ có toàn quyền admin.</div>
+            <div className="set-label">Admin emails</div>
+            <div className="set-desc">Mỗi dòng 1 email. Danh sách này là nguồn quyền admin duy nhất cho UI, rules và Cloud Functions.</div>
           </div>
           <textarea
             className="input textarea"
@@ -178,17 +178,6 @@ export function ConfigTab({
             spellCheck={false}
             placeholder="admin1@cyberlogitec.com&#10;admin2@cyberlogitec.com"
           />
-        </div>
-
-        <div className="set-row stacked" style={{ paddingTop: 0 }}>
-          <div className="set-info">
-            <div className="set-label" style={{ fontSize: 'var(--fs-sm)', color: 'var(--ink-600)' }}>Admin mặc định (hardcoded)</div>
-            <div className="set-desc">Luôn có quyền, không thể gỡ ở đây.</div>
-            <div className="admin-chips">
-              <span className="admin-chip"><span className="dot">P</span>phuc.lnk <span className="lock">🔒</span></span>
-              <span className="admin-chip"><span className="dot">A</span>anhhao.dl108 <span className="lock">🔒</span></span>
-            </div>
-          </div>
         </div>
       </section>
 

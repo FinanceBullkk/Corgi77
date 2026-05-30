@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { formatDateVi, minToHHmm, type Slot } from '../lib/types';
-import { adminDeleteSlot, type Registration } from '../lib/adminDb';
+import { adminDeleteSlot } from '../lib/adminDb';
 import { useConfirm, useToast } from '../confirm-toast-provider';
 import { slotStatus, STATUS_LABEL, typClass, dowVi } from './admin-utils';
 import { SearchIcon } from './admin-icons';
@@ -10,8 +10,8 @@ import { SlotDrawer, SlotRegsDrawer } from './slot-drawer';
 // ── Slots (Ca thi) ─────────────────────────────────────────────────────────────
 
 export function SlotsTab({
-  adminEmail, slots, regs, allowEnrollment, onReload,
-}: { adminEmail: string; slots: Slot[]; regs: Registration[]; allowEnrollment: boolean; onReload: () => void }) {
+  adminEmail, slots, allowEnrollment, onReload,
+}: { adminEmail: string; slots: Slot[]; allowEnrollment: boolean; onReload: () => void }) {
   const [q, setQ] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'Speaking' | '3 Skills'>('all');
   const [dayFilter, setDayFilter] = useState('all');
@@ -26,12 +26,11 @@ export function SlotsTab({
 
   const usage = useMemo(() => {
     const map = new Map<string, number>();
-    regs.forEach((r) => {
-      if (r.speakingSlotId) map.set(r.speakingSlotId, (map.get(r.speakingSlotId) ?? 0) + 1);
-      if (r.skillsSlotId) map.set(r.skillsSlotId, (map.get(r.skillsSlotId) ?? 0) + 1);
+    slots.forEach((s) => {
+      map.set(s.slotId, Math.max(0, s.capacity - s.remaining));
     });
     return map;
-  }, [regs]);
+  }, [slots]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -56,10 +55,16 @@ export function SlotsTab({
 
   const deleteOne = async (s: Slot) => {
     const used = usage.get(s.slotId) ?? 0;
-    const msg = used > 0
-      ? `Ca này có ${used} người đã đăng ký. Xoá sẽ khiến các đăng ký đó bị mồ côi (orphan).\nVẫn xoá?`
-      : `Xoá ca "${s.slotId}" (${formatDateVi(s.date)} ${minToHHmm(s.startMin)}–${minToHHmm(s.endMin)})?`;
-    const ok = await confirm({ title: 'Xoá ca thi?', message: msg, confirmText: 'Xoá', danger: true });
+    if (used > 0) {
+      toast('error', `Không thể xoá ca ${s.slotId} vì đang có ${used} đăng ký. Hãy huỷ hoặc chuyển các đăng ký này trước.`);
+      return;
+    }
+    const ok = await confirm({
+      title: 'Xoá ca thi?',
+      message: `Xoá ca "${s.slotId}" (${formatDateVi(s.date)} ${minToHHmm(s.startMin)}–${minToHHmm(s.endMin)})?`,
+      confirmText: 'Xoá',
+      danger: true,
+    });
     if (!ok) return;
     setBusy(true);
     try { await adminDeleteSlot(adminEmail, s.slotId); toast('success', `Đã xoá ca ${s.slotId}.`); onReload(); }
@@ -68,24 +73,29 @@ export function SlotsTab({
 
   const bulkDelete = async () => {
     const ids = Array.from(sel);
-    const withUsers = ids.filter((id) => (usage.get(id) ?? 0) > 0).length;
-    const warn = withUsers > 0 ? `\n${withUsers} ca đang có người đăng ký — sẽ thành orphan.` : '';
+    const blocked = ids.filter((id) => (usage.get(id) ?? 0) > 0);
+    const deletable = ids.filter((id) => (usage.get(id) ?? 0) === 0);
+    if (deletable.length === 0) {
+      toast('error', 'Không có ca nào có thể xoá. Các ca đã chọn đều đang có đăng ký.');
+      return;
+    }
+    const skipped = blocked.length > 0 ? `\nBỏ qua ${blocked.length} ca đang có đăng ký.` : '';
     const ok = await confirm({
-      title: `Xoá ${ids.length} ca thi?`,
-      message: `Xoá ${ids.length} ca đã chọn?${warn}`,
-      confirmText: 'Xoá tất cả',
+      title: `Xoá ${deletable.length} ca thi?`,
+      message: `Xoá ${deletable.length} ca chưa có đăng ký?${skipped}`,
+      confirmText: 'Xoá',
       danger: true,
     });
     if (!ok) return;
     setBusy(true);
-    const results = await Promise.allSettled(ids.map((id) => adminDeleteSlot(adminEmail, id)));
+    const results = await Promise.allSettled(deletable.map((id) => adminDeleteSlot(adminEmail, id)));
     const failed = results.filter((r) => r.status === 'rejected').length;
-    const done = ids.length - failed;
+    const done = deletable.length - failed;
     setSel(new Set());
     onReload();
     setBusy(false);
-    if (failed === 0) toast('success', `Đã xoá ${done} ca thi.`);
-    else toast('error', `Đã xoá ${done}/${ids.length} ca · ${failed} lỗi.`);
+    if (failed === 0) toast('success', blocked.length > 0 ? `Đã xoá ${done} ca, bỏ qua ${blocked.length} ca đang có đăng ký.` : `Đã xoá ${done} ca thi.`);
+    else toast('error', `Đã xoá ${done}/${deletable.length} ca · ${failed} lỗi.`);
   };
 
   return (

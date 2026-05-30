@@ -5,25 +5,12 @@ service cloud.firestore {
 
     // ─── Helpers ────────────────────────────────────────────────────────
 
-    // Bootstrap admins (hardcoded). These accounts always have admin access
-    // even before /config/main exists.
-    function isHardcodedAdmin() {
-      return request.auth != null && request.auth.token.email in [
-        'phuc.lnk@cyberlogitec.com',
-        'anhhao.dl108@gmail.com'
-      ];
-    }
-
-    // Dynamic admins from /config/main.adminEmails (added by another admin).
-    function isConfigAdmin() {
+    // Admins are configured in /config/main.adminEmails.
+    function isAdmin() {
       return request.auth != null
         && exists(/databases/$(database)/documents/config/main)
         && request.auth.token.email in
              get(/databases/$(database)/documents/config/main).data.get('adminEmails', []);
-    }
-
-    function isAdmin() {
-      return isHardcodedAdmin() || isConfigAdmin();
     }
 
     // Server-side enrollment-open check (deadline + allowEnrollment).
@@ -109,6 +96,24 @@ service cloud.firestore {
                 && request.resource.data.endMin > request.resource.data.startMin));
     }
 
+    function validAdminSlotDelete() {
+      return resource.data.remaining is int
+        && resource.data.capacity is int
+        && resource.data.remaining == resource.data.capacity;
+    }
+
+    function validClientAuditLog() {
+      return request.resource.data.keys().hasOnly(['timestamp', 'email', 'event', 'detail'])
+        && request.resource.data.timestamp == request.time
+        && request.resource.data.email is string
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.event is string
+        && request.resource.data.event.matches(
+          '^admin\\.(deleteRegistration|updateSlot|createSlot|deleteSlot|updateConfig|upsertIneligibility|deleteIneligibility|backfillEmpCodeClaims)$'
+        )
+        && request.resource.data.detail is map;
+    }
+
     // ─── Slots ──────────────────────────────────────────────────────────
     // Read: any signed-in user
     // Create: admin only, with field validation
@@ -119,7 +124,7 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create: if isAdmin() && validNewSlot();
       allow update: if isAdmin() && validAdminSlotUpdate();
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() && validAdminSlotDelete();
     }
 
     // ─── Config ─────────────────────────────────────────────────────────
@@ -181,13 +186,13 @@ service cloud.firestore {
 
     // ─── Audit Logs (immutable) ─────────────────────────────────────────
     // Read: admin only
-    // Create: any signed-in user (own actions)
+    // Create: admin client may append admin.* events for its own email only.
+    //         Booking/cancel audit events are written by Cloud Functions via
+    //         Admin SDK, bypassing rules, so signed-in users cannot forge them.
     // Update/Delete: nobody (immutable)
     match /auditLogs/{id} {
       allow read: if isAdmin();
-      allow create: if request.auth != null
-        && request.resource.data.email is string
-        && request.resource.data.event is string;
+      allow create: if isAdmin() && validClientAuditLog();
       allow update, delete: if false;
     }
 

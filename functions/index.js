@@ -1,5 +1,4 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
@@ -7,11 +6,6 @@ const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 initializeApp();
 
 const db = getFirestore();
-
-const HARDCODED_ADMINS = [
-  'phuc.lnk@cyberlogitec.com',
-  'anhhao.dl108@gmail.com',
-];
 
 function minToHHmm(min) {
   const h = Math.floor(min / 60);
@@ -61,7 +55,6 @@ function businessError(message) {
 
 async function assertAdmin(request) {
   const email = assertSignedIn(request).toLowerCase();
-  if (HARDCODED_ADMINS.includes(email)) return email;
   const cfgSnap = await db.doc('config/main').get();
   const adminEmails = cfgSnap.exists ? (cfgSnap.data().adminEmails || []) : [];
   if (adminEmails.map((e) => String(e).toLowerCase()).includes(email)) return email;
@@ -69,12 +62,16 @@ async function assertAdmin(request) {
 }
 
 async function addAudit(email, event, detail = {}) {
-  await db.collection('auditLogs').add({
-    timestamp: Timestamp.now(),
-    email,
-    event,
-    detail,
-  });
+  try {
+    await db.collection('auditLogs').add({
+      timestamp: Timestamp.now(),
+      email,
+      event,
+      detail,
+    });
+  } catch (e) {
+    console.warn('Audit log failed:', e);
+  }
 }
 
 async function queueConfirmationEmail(email, fullName, sp, sk, isUpdate) {
@@ -309,28 +306,6 @@ exports.repairEmpCodeClaimsNow = onCall(async (request) => {
   const result = await repairClaims();
   await addAudit(email, 'admin.backfillEmpCodeClaims', result);
   return result;
-});
-
-exports.syncEmpCodeClaimOnRegistrationWrite = onDocumentWritten('registrations/{email}', async (event) => {
-  const email = event.params.email;
-  const before = event.data?.before?.data();
-  const after = event.data?.after?.data();
-
-  if (!after) {
-    if (!before?.empCode) return;
-    const claimRef = db.doc(`empCodeClaims/${before.empCode}`);
-    const claimSnap = await claimRef.get();
-    if (claimSnap.exists && claimSnap.data().email === email) await claimRef.delete();
-    return;
-  }
-
-  const empCode = String(after.empCode || '');
-  if (!/^\d{6}$/.test(empCode)) return;
-  const claimRef = db.doc(`empCodeClaims/${empCode}`);
-  await db.runTransaction(async (tx) => {
-    const claimSnap = await tx.get(claimRef);
-    if (!claimSnap.exists) tx.set(claimRef, { email });
-  });
 });
 
 exports.scheduledRepairEmpCodeClaims = onSchedule('every 5 minutes', async () => {

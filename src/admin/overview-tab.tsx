@@ -1,10 +1,9 @@
 import { formatDateVi, type Slot } from '../lib/types';
-import { type Registration } from '../lib/adminDb';
 import { dowVi } from './admin-utils';
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
-export function Overview({ slots, regs, allowEnrollment }: { slots: Slot[]; regs: Registration[]; allowEnrollment: boolean }) {
+export function Overview({ slots, regTotal, allowEnrollment }: { slots: Slot[]; regTotal: number; allowEnrollment: boolean }) {
   const sp = slots.filter((s) => s.type === 'Speaking');
   const sk = slots.filter((s) => s.type === '3 Skills');
   const sum = (arr: Slot[], k: 'capacity' | 'remaining') => arr.reduce((a, s) => a + s[k], 0);
@@ -25,7 +24,7 @@ export function Overview({ slots, regs, allowEnrollment }: { slots: Slot[]; regs
   return (
     <>
       <div className="statbar">
-        <div className="stat"><div className="k">Tổng đăng ký</div><div className="v">{regs.length}</div><div className="ctx">trên {spCap + skCap} suất khả dụng</div></div>
+        <div className="stat"><div className="k">Tổng đăng ký</div><div className="v">{regTotal}</div><div className="ctx">trên {spCap + skCap} suất khả dụng</div></div>
         <div className="stat"><div className="k">Lấp đầy Speaking</div><div className="v">{spPct}<small>%</small></div><div className="ctx"><span className="mini-bar"><span className="mini-fill" style={{ width: `${spPct}%` }} /></span>{spBooked}/{spCap}</div></div>
         <div className="stat accent"><div className="k">Lấp đầy 3 Skills</div><div className="v">{skPct}<small>%</small></div><div className="ctx"><span className="mini-bar"><span className="mini-fill" style={{ width: `${skPct}%` }} /></span>{skBooked}/{skCap}</div></div>
         <div className="stat"><div className="k">Suất còn trống</div><div className="v">{freeSp + freeSk}</div><div className="ctx">{freeSp} Speaking · {freeSk} 3 Skills</div></div>

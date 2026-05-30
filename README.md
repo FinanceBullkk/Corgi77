@@ -1,319 +1,291 @@
 # Assessment Booking Q2 2026
 
-React SPA chạy trong Google Apps Script (HtmlService), dùng Google Sheet làm DB. Xác thực email công ty (`@cyberlogitec.com`), chống race bằng `LockService`.
+React + Firebase booking app cho kỳ Assessment Q2 2026.
 
-## Cấu trúc
+Production hiện tại chạy trên:
 
-```
+- **Firebase Hosting**: serve React SPA build bằng Vite.
+- **Firebase Authentication**: đăng nhập Google.
+- **Cloud Firestore**: lưu slots, registrations, config, eligibility/blocklist, audit logs.
+- **Cloud Functions v2**: xử lý booking/cancel bằng transaction server-side.
+- **Firestore Rules**: chặn truy cập ngoài quyền và bảo vệ các write client-side còn lại.
+
+> Google Apps Script / Google Sheet là hướng triển khai legacy trong các handoff cũ. README này mô tả Firebase app hiện tại.
+
+## Cấu Trúc
+
+```text
 .
-├── src/                  React app (TypeScript + Vite)
-│   ├── lib/gas.ts        cầu nối google.script.run + types
-│   ├── lib/mockData.ts   mock dữ liệu cho dev local
-│   ├── App.tsx           UI chính
-│   ├── main.tsx, styles.css
-├── gas/                  Apps Script project (clasp)
-│   ├── Code.js           server (init / book / cancel / admin)
-│   ├── appsscript.json
-│   ├── .claspignore
-│   └── index.html        ← copy từ dist/index.html khi deploy
-├── sheet-templates/      CSV mẫu để import vào Google Sheet
-│   ├── Slots.csv
-│   ├── Registrations.csv
-│   ├── Config.csv
-│   ├── AuditLog.csv
-│   └── Eligibility.csv
-├── scripts/copy-to-gas.mjs
-├── vite.config.ts
-└── package.json
+├── src/                         React app
+│   ├── App.tsx                  Booking flow
+│   ├── AdminPanel.tsx           Admin lazy-loaded panel
+│   ├── booking/                 Booking UI components
+│   ├── admin/                   Admin tabs and controls
+│   ├── lib/db.ts                User-facing Firestore/Functions API
+│   ├── lib/adminDb.ts           Admin Firestore API
+│   └── __tests__/               Vitest suites
+├── functions/
+│   ├── index.js                 Cloud Functions callables and scheduled repair
+│   └── package.json
+├── firestore.rules              Firestore security rules
+├── firebase.json                Firebase Hosting/Firestore/Functions config
+├── .github/workflows/deploy.yml CI verify + Hosting deploy
+├── package.json
+└── vite.config.ts
 ```
 
----
+## Luồng Chính
 
-## A. Setup lần đầu
+### User Booking
 
-### A.1. Cài Node + clasp
+1. User đăng nhập Google.
+2. App load `/config/main`, `/slots`, và đăng ký hiện tại tại `/registrations/{email}`.
+3. Ở bước nhập thông tin, app pre-flight `empCode` bằng:
+   - `/ineligibility/{empCode}`
+   - `/eligibility/{empCode}` nếu `requireEligibility = true`
+   - `/empCodeClaims/{empCode}` để báo sớm nếu mã NV đã đăng ký bằng email khác
+4. Khi submit, client gọi Cloud Function `bookRegistration`.
+5. Function chạy Firestore transaction để:
+   - kiểm tra config/deadline/blocklist/eligibility
+   - giữ lock `/empCodeClaims/{empCode}`
+   - kiểm tra slot hợp lệ, không trùng giờ, còn chỗ
+   - cập nhật `/registrations/{email}`
+   - giảm/tăng `remaining` của slot khi tạo/đổi ca
+6. Function ghi audit log và queue email xác nhận nếu config bật.
 
-```bash
-node -v                              # ≥ 18 (đã có v22)
-npm i -g @google/clasp
-clasp login                          # đăng nhập tài khoản Workspace
+### Cancel
+
+Client gọi Cloud Function `cancelRegistration`. Function transactionally xoá registration, trả ghế về slot, xoá claim `empCode`, lưu quota đổi ca và ghi audit.
+
+### Emp Code Uniqueness
+
+Không dùng `registrations/{empCode}` vì app cần tra booking theo email đăng nhập. Thay vào đó dùng collection lock:
+
+```text
+/empCodeClaims/{empCode} -> { email }
 ```
 
-Bật Apps Script API: https://script.google.com/home/usersettings → **ON**.
+`bookRegistration` đọc claim trong transaction. Nếu claim tồn tại với email khác, request bị chặn bằng thông báo `Mã NV này đã đăng ký bằng email khác.`. `cancelRegistration` xoá claim của email hiện tại để giải phóng mã NV.
 
-### A.2. Tạo Google Sheet + 5 sheet con
+## Firestore Data Model
 
-1. Tạo Google Sheet mới (tên: `Assessment Booking Q2 2026`).
-2. Tạo **5 sheet con** với đúng tên (case-sensitive):
-   - **Slots** — import `sheet-templates/Slots.csv` (File → Import → Upload → Replace current sheet, separator: Comma).
-   - **Registrations** — import `sheet-templates/Registrations.csv` (chỉ có header, không có data).
-   - **Config** — import `sheet-templates/Config.csv`.
-   - **AuditLog** — import `sheet-templates/AuditLog.csv` (chỉ header).
-   - **Eligibility** — import `sheet-templates/Eligibility.csv` (chỉ header, điền DS học viên hợp lệ).
-3. Trong sheet `Slots`:
-   - Chọn cột `date`, format → **Date** (`yyyy-mm-dd` hoặc bất kỳ format Date nào).
-   - Chọn cột `start_time` và `end_time`, format → **Time** (`HH:mm`).
-   - Cột `location` là text tự do (VD: `Phòng A`, `Building A - Floor 3`).
-4. Trong sheet `Config`:
-   - Ô `value` của `deadline`: format → **Date time**. Sửa giá trị cho đúng deadline thực tế.
-   - Ô `value` của `email_confirm`: gõ `TRUE` hoặc `FALSE`.
-   - Ô `value` của `allow_enrollment`: gõ `TRUE` để mở, `FALSE` để khoá.
+```text
+/config/main
+  allowEnrollment: boolean
+  deadline: Timestamp
+  maxChanges: number
+  emailConfirm: boolean
+  requireEligibility: boolean
+  adminEmails: string[]
 
-### A.3. Bind Apps Script vào Sheet
+/slots/{slotId}
+  type: "Speaking" | "3 Skills"
+  date: "YYYY-MM-DD"
+  session: string
+  startMin: number
+  endMin: number
+  capacity: number
+  remaining: number
+  location: string
 
-1. Trong Sheet, **Extensions → Apps Script**. Một project mới mở ra.
-2. Đặt tên project (VD: `Booking App`).
-3. Copy **Script ID** từ Project Settings (icon bánh răng bên trái → Settings → IDs).
-4. Trong repo, copy file template:
-   ```bash
-   cp gas/.clasp.json.example gas/.clasp.json
-   ```
-5. Mở `gas/.clasp.json`, dán Script ID vào.
+/registrations/{email}
+  email: string
+  empCode: string
+  fullName: string
+  bu: string
+  speakingSlotId: string
+  skillsSlotId: string
+  createdAt: Timestamp
+  updatedAt: Timestamp
+  changeCount: number
 
-### A.4. Đăng ký scope cho user đầu tiên (owner)
+/empCodeClaims/{empCode}
+  email: string
 
-Sau khi push lần đầu (mục B), mở Apps Script editor → chạy thử function `init` → chấp thuận các scope:
-- Spreadsheet (read/write)
-- Email user info
-- Send email (nếu bật `email_confirm`)
+/eligibility/{empCode}
+  empCode: string
+  fullName?: string
+  bu?: string
+  email?: string
 
-Mỗi HV lần đầu vào app cũng sẽ thấy màn hình authorize tương tự.
+/ineligibility/{empCode}
+  reason: string
+  email?: string
+  fullName?: string
 
----
+/auditLogs/{autoId}
+  timestamp: Timestamp
+  email: string
+  event: string
+  detail: object
 
-## B. Workflow phát triển
+/mail/{autoId}
+  to: string
+  message: { subject: string, html: string }
+```
 
-### B.1. Dev local (UI)
+## Setup Local
+
+### 1. Cài dependencies
 
 ```bash
-npm i
+npm ci
+cd functions && npm ci
+```
+
+### 2. Tạo `.env.local`
+
+Copy từ `.env.example` rồi điền Firebase web app config:
+
+```bash
+cp .env.example .env.local
+```
+
+Các biến cần có:
+
+```text
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
+```
+
+### 3. Chạy dev server
+
+```bash
 npm run dev
 ```
 
-Truy cập `http://localhost:5173`. App tự động chạy với **mock data** (lưu state vào `localStorage`). Mock cho phép thử book/cancel để test UI.
+Mặc định Vite chạy ở `http://localhost:5173`.
 
-> Mock state có thể reset bằng cách xóa key `mock_booking_state_v1` trong DevTools → Application → Local Storage.
+## Scripts
 
-### B.2. Build single-file
+```bash
+npm run dev              # local Vite dev server
+npm run typecheck        # TypeScript check
+npm test -- --run        # Vitest
+npm run check:functions  # syntax check functions/index.js
+npm run check:rules      # Firebase dry-run compile firestore.rules
+npm run build            # production build
+npm run check            # typecheck + test + functions syntax + build
+```
+
+`check:rules` cần Firebase CLI login/service account vì nó gọi API compile rules của Firebase.
+
+## Deploy
+
+### Hosting
 
 ```bash
 npm run build
+firebase deploy --only hosting
 ```
 
-Output: `dist/index.html` (toàn bộ JS + CSS inline trong 1 file).
-
-### B.3. Deploy lên Apps Script
+### Firestore Rules
 
 ```bash
-npm run push       # build + copy → gas/index.html + clasp push
-npm run deploy     # như push + clasp deploy (tạo version mới)
+firebase deploy --only firestore:rules
 ```
 
-Sau `npm run deploy` lần đầu, mở Apps Script editor → **Deploy → Manage deployments** để lấy URL `.../exec`. Các lần deploy sau, version sẽ tự tăng nhưng URL không đổi.
-
-### B.4. Cấu hình Web app deployment (chỉ 1 lần)
-
-Trong Apps Script editor → **Deploy → New deployment**:
-
-- **Type**: Web app
-- **Execute as**: `User accessing the web app`
-- **Who has access**: `Anyone within cyberlogitec.com`
-
-Copy URL `.../exec` — đây là link gửi cho HV.
-
-> Hai setting `Execute as` + `Who has access` cũng đã khai trong `appsscript.json`, nhưng setting trên UI mới là setting áp dụng. Hai cái phải khớp.
-
----
-
-## C. Vận hành
-
-### C.1. Mở/đóng đăng ký
-
-- **Bằng deadline**: Mở sheet `Config`, sửa ô `deadline`. Sau thời điểm này, server trả `deadlinePassed: true` và mọi `book()` / `cancel()` đều bị từ chối.
-- **Bằng khoá khẩn cấp**: `Config` → `allow_enrollment` → `FALSE`. Có hiệu lực ngay, bất kể deadline. Dùng khi cần dừng đăng ký ngay lập tức (VD: sự cố hệ thống, thay đổi lịch thi).
-
-### C.2. Thêm/sửa slot
-
-Mở sheet `Slots`, thêm dòng mới. **Không** sửa `slot_id` của slot đã có HV đăng ký (sẽ orphan record).
-
-Cột `location` hiển thị địa điểm thi cho học viên (VD: `Phòng A`, `Tầng 3 - Toà B`).
-
-### C.3. Sanity check Sheet (`lint`)
-
-Trong Apps Script editor: chọn function `lint` từ dropdown → **Run** → mở **View → Logs**. Lint kiểm tra:
-
-- Duplicate `slot_id`
-- Slot có `type` không hợp lệ, `capacity ≤ 0`, hoặc `start_time ≥ end_time`
-- Registration trỏ tới `slot_id` không còn tồn tại (orphan sau khi admin xóa slot)
-- Registration có `speaking_slot_id` trỏ tới slot 3 Skills (hoặc ngược lại)
-- Tổng booked > capacity (overbook do admin sửa tay)
-- Cùng email xuất hiện ở >1 dòng (đáng ra chỉ 1)
-- 2 ca của 1 HV trùng giờ (sau khi admin sửa sheet)
-- Config thiếu `deadline`
-- Registration thiếu `emp_code`, `full_name`, hoặc `bu`
-
-Chạy `lint` trước khi mở đăng ký, sau khi import data, hoặc bất kỳ khi nào admin sửa sheet thủ công.
-
-### C.4. Audit log
-
-Mỗi sự kiện `book.create`, `book.update`, `cancel`, `eligibility_block`, `validation_error` được ghi vào 2 nơi:
-
-1. **Sheet `AuditLog`** — xem trực tiếp trong Google Sheet, cột `detail_json` chứa chi tiết.
-2. **Console** — xem ở Apps Script editor: **View → Executions → Logs**.
-
-Định dạng cột AuditLog:
-| Cột | Mô tả |
-|---|---|
-| timestamp | ISO 8601 |
-| email | HV thực hiện |
-| event | `book.create` / `book.update` / `cancel` / `eligibility_block` / `validation_error` |
-| emp_code | Mã NV |
-| full_name | Họ tên |
-| bu | BU |
-| speaking_slot_id | Slot Speaking mới |
-| skills_slot_id | Slot Skills mới |
-| prev_speaking | Slot Speaking cũ (nếu update) |
-| prev_skills | Slot Skills cũ (nếu update) |
-| detail_json | JSON chi tiết (reason, submitted values, etc.) |
-
-### C.5. Eligibility (quản lý danh sách hợp lệ)
-
-Sheet `Eligibility` chứa danh sách email HV được phép đăng ký. Admin điền email HV trước khi mở registration (mỗi email 1 dòng, cột `email` bắt buộc, `full_name`/`bu`/`emp_code` tuỳ chọn).
-
-Nếu sheet `Eligibility` **có data** → chỉ HV trong danh sách mới đăng ký được. Nếu sheet **trống** → mọi HV `@cyberlogitec.com` đều đăng ký được (fallback cho giai đoạn test).
-
-### C.6. Thống kê nhanh
-
-Trong Apps Script editor: chọn function `adminStats` → **Run** → mở **View → Logs**. Output gồm:
-
-- **Total registered / Total eligible**
-- **Registered by BU** (breakdown số HV theo BU)
-- **% fill per slot** (mỗi slot đã đầy bao nhiêu %)
-
-Dùng để đánh giá nhanh trước khi đóng registration.
-
-### C.7. Ai chưa đăng ký?
-
-Trong Apps Script editor: chọn function `adminMissing` → **Run** → mở **View → Logs**. Output: danh sách email trong sheet Eligibility mà chưa có trong Registrations. Hữu ích để gửi reminder trước deadline.
-
-### C.8. Tắt/bật email xác nhận
-
-Sheet `Config` → `email_confirm` → `TRUE` / `FALSE`.
-
-> Email được gửi qua `MailApp.sendEmail()`. Vì web app deploy `USER_ACCESSING`, email gửi đi với danh nghĩa **HV** (gửi cho chính họ). Có thể tốn 1 lần authorize scope `script.send_mail` ở lần dùng đầu.
-
----
-
-## D. Checklist trước khi mở đăng ký
-
-- [ ] Sheet `Slots` đầy đủ slot + location, cột `date` format Date, `start_time`/`end_time` format Time.
-- [ ] Sheet `Registrations` chỉ có header (data trống).
-- [ ] Sheet `Config` có `deadline` đúng, `email_confirm` đúng, `allow_enrollment` = `TRUE`.
-- [ ] Sheet `AuditLog` chỉ có header (data trống).
-- [ ] Sheet `Eligibility` đã điền DS HV hợp lệ (hoặc để trống nếu mở cho tất cả).
-- [ ] `npm run deploy` thành công, scope đã chấp thuận.
-- [ ] Web app deployment: `USER_ACCESSING` + `Anyone within cyberlogitec.com`.
-- [ ] Chạy `lint()` → không có lỗi.
-- [ ] Chạy `adminStats()` → kiểm tra slot capacity hợp lý.
-- [ ] Test 3 cổng (mở 2 tab cùng tài khoản test):
-  - [ ] Book bình thường → thành công.
-  - [ ] Book 2 ca trùng giờ → bị chặn.
-  - [ ] Book 1 ca đã full → bị chặn.
-  - [ ] Nếu có eligibility → tài khoản ngoài DS bị chặn.
-- [ ] Test 2 tab khác tài khoản cùng book slot cuối → chỉ 1 thành công (kiểm chứng `LockService`).
-- [ ] Test cancel → row biến mất khỏi sheet, remaining tăng lại.
-- [ ] Test deadline: sửa `deadline` về quá khứ → app từ chối book/cancel.
-- [ ] Test `allow_enrollment = FALSE` → app hiển thị "đăng ký bị khoá".
-
----
-
-## E. Ghi chú giới hạn / cảnh báo
-
-- **Identity**: `Session.getActiveUser().getEmail()` chỉ trả email thật khi HV cùng domain Workspace với owner. Người ngoài `@cyberlogitec.com` không vào được (do `Who has access: domain`).
-- **Email scope**: nếu `email_confirm: TRUE`, mỗi HV lần đầu vào app sẽ thấy thêm 1 scope `script.send_mail`. Nếu không muốn, set `FALSE`.
-- **Quota**: ~20.000 execute/ngày, 1.500 email/ngày (Workspace). Thừa cho ~200 HV.
-- **CSP**: HtmlService chạy trong iframe sandbox. Vite single-file đã inline JS/CSS. Tránh thêm CDN `<script>` từ ngoài.
-- **Sheet column order là cố định** (theo template). Đừng đổi thứ tự cột, server đọc theo index.
-- **Đổi `slot_id` của slot đã có người book**: Registrations sẽ orphan. Tạo slot mới thay vì sửa.
-- **LockService**: chỉ có hiệu lực trong cùng 1 script project. Không chống được 2 user chạy script khác nhau cùng lúc (không phải scenario ở đây).
-
----
-
-## F. Troubleshooting
-
-| Triệu chứng | Nguyên nhân khả dĩ |
-|---|---|
-| "Không xác định được email" | HV đăng nhập tài khoản cá nhân thay vì Workspace. Logout → login lại bằng `@cyberlogitec.com`. |
-| "Bạn không có trong danh sách eligibility" | Sheet `Eligibility` có data nhưng email HV chưa được thêm. Admin cần thêm email vào sheet. |
-| "Đăng ký hiện đang bị khoá" | `Config.allow_enrollment` đang là `FALSE`. Admin cần chuyển sang `TRUE`. |
-| Slot không hiện | Sheet `Slots` cột `date`/`start_time` không phải Date/Time → server parse ra 00:00 hoặc lỗi. |
-| Book báo "đã hết hạn" nhưng deadline còn | Ô `deadline` parse sai format. Format lại cell thành Date time. |
-| Email không gửi | `email_confirm: FALSE` trong Config, hoặc quota MailApp hết. Check `View → Executions` trong Apps Script editor. |
-| Đổi React UI mà link cũ chưa cập nhật | Sau `clasp deploy`, deployment cũ vẫn dùng version cũ. Mở **Manage deployments → Edit → Version: New version**. |
-| AuditLog trống | Sheet `AuditLog` chưa được tạo hoặc header bị sai. Import lại từ `sheet-templates/AuditLog.csv`. |
-| `adminStats` / `adminMissing` báo lỗi | Chưa tạo sheet `Eligibility` hoặc `AuditLog`. Import CSV mẫu. |
-
----
-
-## G. Admin Setup (Firebase / Firestore)
-
-Hệ thống có 2 mode chạy song song: **GAS** (legacy, dùng Google Sheet) và **Firebase** (mới, dùng Firestore). Phần này hướng dẫn cấu hình cho **Firebase mode**.
-
-### G.1. Cấu hình Admin Emails
-
-Admin được xác định bởi email trong Firestore tại `/config/main`.
-
-Trường `adminEmails` là mảng email strings:
-
-```
-/config/main → { adminEmails: ["admin1@company.com", "admin2@company.com"] }
-```
-
-Nếu Firestore config không khả dụng, app fallback về danh sách hardcode trong `src/lib/admin.ts`.
-
-> **Lưu ý**: Trong `App.tsx`, `refreshAdminCache()` được gọi và **await** trước `isAdmin()` để đảm bảo luôn lấy config mới nhất từ Firestore, tránh dùng stale data.
-
-### G.2. Bật Eligibility Checking (tuỳ chọn)
-
-Để giới hạn chỉ cho phép user cụ thể được đăng ký:
-
-1. Tạo collection `/eligibility` trong Firestore
-2. Thêm document cho mỗi user hợp lệ: doc ID = empCode (6 chữ số), fields: `{ empCode, fullName, bu?, email? }`
-3. Set `/config/main.requireEligibility = true`
-
-> ⚠️ **Quan trọng**: Nếu `requireEligibility = true` nhưng **chưa có document nào** trong `/eligibility`, hệ thống sẽ **vẫn cho phép tất cả** user đăng ký (backward-compatible). Khi collection có ít nhất 1 document, chỉ user trong danh sách mới được book.
-
-> **Bảo mật**: Firestore rules cho phép `get` (đọc 1 doc theo empCode) với mọi user đã đăng nhập, nhưng `list` (liệt kê toàn bộ collection) chỉ dành cho admin. Điều này ngăn user scraping danh sách eligibility.
-
-### G.3. Blocklist / Ineligibility (chặn user)
-
-Để chặn user cụ thể không được đăng ký:
-
-1. Tạo collection `/ineligibility` trong Firestore
-2. Thêm document: doc ID = empCode (6 chữ số), fields: `{ reason: "lý do chặn" }`
-3. Khi user nhập empCode bị chặn, hệ thống hiện banner đỏ và không cho qua Step 2.
-
-Hoặc dùng sheet **"Ineligibility"** trong Google Sheet (cột A = Mã NV, cột B = Lý do) cho GAS mode.
-
-> Firestore rules: `get` (đọc 1 doc) cho mọi user, `list` chỉ cho admin.
-
-### G.4. Set Enrollment Deadline
-
-```
-/config/main → {
-  deadline: Timestamp,        // thời hạn đăng ký
-  allowEnrollment: true/false, // khoá/mở đăng ký
-  maxChanges: 3,              // số lần đổi ca tối đa
-  emailConfirm: true/false    // gửi email xác nhận
-}
-```
-
-### G.5. Bulk Import (CSV)
-
-Dùng script có sẵn:
-- `scripts/seed-firestore.mjs` — import Slots và Config từ CSV vào Firestore
-- Sheet templates trong `sheet-templates/` — tham khảo format CSV
+### Cloud Functions
 
 ```bash
-node scripts/seed-firestore.mjs
+firebase deploy --only functions
 ```
+
+Functions hiện tại:
+
+- `bookRegistration`
+- `cancelRegistration`
+- `repairEmpCodeClaimsNow`
+- `scheduledRepairEmpCodeClaims`
+
+Nếu chỉ đổi UI, deploy Hosting là đủ. Nếu đổi `functions/index.js`, phải deploy Functions. Nếu đổi `firestore.rules`, phải deploy rules.
+
+## CI
+
+`.github/workflows/deploy.yml` chạy:
+
+- `npm run typecheck`
+- `npm test -- --run`
+- `npm run check:functions`
+- `npm run check:rules`
+- `npm run build`
+
+Pull request vào `main` chỉ verify. Push vào `main` verify xong mới deploy Firebase Hosting.
+
+CI cần secret:
+
+- `FIREBASE_SERVICE_ACCOUNT`
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+
+## Admin Operation
+
+### Config
+
+Admin chỉnh `/config/main` qua Admin Panel:
+
+- `allowEnrollment`: mở/khoá đăng ký
+- `deadline`: hạn đăng ký
+- `maxChanges`: số lần đổi ca tối đa
+- `emailConfirm`: queue email xác nhận
+- `requireEligibility`: bắt buộc mã NV có trong `/eligibility`
+- `adminEmails`: danh sách admin động
+
+### Slots
+
+Admin tạo/sửa/xoá slot trong Admin Panel. Mỗi slot có `type`, `date`, `session`, `startMin`, `endMin`, `capacity`, `remaining`, `location`.
+
+Lưu ý: hệ thống không cho xoá slot đang có registration. Hãy huỷ hoặc chuyển các đăng ký liên quan trước khi xoá slot production.
+
+### Registrations
+
+Registrations được lưu theo email: `/registrations/{email}`. Admin Panel load registrations theo trang để tránh full-scan lớn.
+
+### Eligibility / Ineligibility
+
+- `/eligibility/{empCode}`: danh sách mã NV được phép đăng ký khi `requireEligibility = true`.
+- `/ineligibility/{empCode}`: blocklist. Reason sẽ hiển thị cho user ở bước nhập thông tin.
+
+### Emp Code Claims Repair
+
+`repairEmpCodeClaimsNow` và `scheduledRepairEmpCodeClaims` dùng để backfill/sửa `/empCodeClaims` từ registrations hiện có. Duplicate empCode sẽ bị report trong kết quả repair và cần admin xử lý dữ liệu gốc.
+
+## Checklist Trước Khi Mở Đăng Ký
+
+- [ ] `/config/main.allowEnrollment = true`
+- [ ] `/config/main.deadline` đúng thời hạn
+- [ ] Slots đã đủ capacity/location
+- [ ] Eligibility đã import nếu bật `requireEligibility`
+- [ ] Ineligibility đã import nếu có blocklist
+- [ ] Không còn duplicate `empCode` trong registrations cũ
+- [ ] `repairEmpCodeClaimsNow` đã chạy/backfill claim cho data cũ
+- [ ] Test user book 2 ca hợp lệ thành công
+- [ ] Test mã NV trùng email khác bị chặn ngay ở bước nhập thông tin
+- [ ] Test 2 ca trùng giờ bị chặn
+- [ ] Test slot full bị chặn
+- [ ] Test cancel trả ghế và giải phóng empCode claim
+- [ ] `npm run check` pass
+- [ ] `npm run check:rules` pass
+
+## Troubleshooting
+
+| Triệu chứng | Kiểm tra |
+|---|---|
+| `missing or insufficient permissions` khi admin thao tác | Email có nằm trong `/config/main.adminEmails` không; rules/functions đã deploy chưa |
+| User nhập mã NV trùng nhưng chưa bị chặn | `/empCodeClaims/{empCode}` đã được backfill chưa; rules/functions mới đã deploy chưa |
+| Booking báo lỗi nhưng Firestore đã đổi data | Kiểm tra Cloud Functions logs; audit log fail đã được catch, nhưng email queue hoặc lỗi post-commit khác cần xem logs |
+| Slot còn chỗ sai | Kiểm tra registrations trỏ tới slot, `remaining`, và chạy repair/admin đối soát |
+| Firestore rules warnings khi deploy | Firebase linter có thể warning helper functions/get/exists nhưng deploy pass nếu `compiled successfully` |
+| Functions deploy lỗi Eventarc/IAM | Re-run sau vài phút hoặc cấp role theo Firebase CLI gợi ý; scheduled functions cần Cloud Scheduler/PubSub/Eventarc setup |
+
+## Legacy Notes
+
+Các thư mục/tài liệu cũ về Google Apps Script, Google Sheet, `clasp`, hoặc sheet templates chỉ còn giá trị tham khảo/handoff lịch sử. Luồng production hiện tại là Firebase-first như mô tả ở trên.

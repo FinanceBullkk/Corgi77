@@ -5,8 +5,7 @@ import {
   getDocs,
   Timestamp,
 } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from './firebase';
+import { db } from './firebase';
 import type { BookPayload, BookResult, CancelResult, InitResult, Slot } from './types';
 import { captureError, friendlyFirestoreError } from './monitoring';
 
@@ -183,7 +182,9 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
   if (blockReason) return { ok: false, error: blockReason };
 
   try {
-    const callBook = httpsCallable<Omit<BookPayload, 'email'>, { emailSent?: boolean }>(functions, 'bookRegistration');
+    // Lazy-load the Functions SDK only at submit time (keeps it off first paint).
+    const { getFunctions, httpsCallable } = await import('firebase/functions');
+    const callBook = httpsCallable<Omit<BookPayload, 'email'>, { emailSent?: boolean }>(getFunctions(), 'bookRegistration');
     const res = await callBook({
       empCode: trimmedEmpCode,
       fullName: fullName.trim(),
@@ -212,7 +213,9 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
 
 export async function cancelDb(email: string): Promise<CancelResult> {
   try {
-    const callCancel = httpsCallable<Record<string, never>, Record<string, never>>(functions, 'cancelRegistration');
+    // Lazy-load the Functions SDK only at cancel time (keeps it off first paint).
+    const { getFunctions, httpsCallable } = await import('firebase/functions');
+    const callCancel = httpsCallable<Record<string, never>, Record<string, never>>(getFunctions(), 'cancelRegistration');
     await callCancel({});
     let state: InitResult | undefined;
     try {

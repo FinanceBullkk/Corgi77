@@ -16,24 +16,20 @@ import { isAdmin, fetchAdminEmails, ADMIN_EMAILS } from '../lib/admin';
 import { mockDocSnap } from './mocks/firebase';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UC-A01: isAdmin() — Hardcoded admin detection
+// UC-A01 -> UC-A06: isAdmin() before config cache is loaded
 // ═══════════════════════════════════════════════════════════════════════════
 describe('isAdmin()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('UC-A01: returns true for hardcoded admin email', () => {
-    expect(isAdmin('phuc.lnk@cyberlogitec.com')).toBe(true);
+  it('UC-A01: returns false before admin config is fetched', () => {
+    expect(isAdmin('admin@test.com')).toBe(false);
   });
 
-  it('UC-A02: returns true for hardcoded admin (case insensitive)', () => {
-    expect(isAdmin('PHUC.LNK@CYBERLOGITEC.COM')).toBe(true);
-  });
-
-  it('UC-A02b: returns false for hao.nha (removed from admin)', () => {
-    expect(isAdmin('hao.nha@cyberlogitec.com')).toBe(false);
-    expect(isAdmin('HAO.NHA@CYBERLOGITEC.COM')).toBe(false);
+  it('UC-A02: returns false for any configured-looking admin before fetch', () => {
+    expect(isAdmin('owner@cyberlogitec.com')).toBe(false);
+    expect(isAdmin('ops.admin@gmail.com')).toBe(false);
   });
 
   it('UC-A03: returns false for non-admin email', () => {
@@ -54,51 +50,46 @@ describe('isAdmin()', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UC-A07: fetchAdminEmails() — Merge hardcoded + Firestore config admins
+// UC-A07: fetchAdminEmails() — Load admin emails from Firestore config
 // ═══════════════════════════════════════════════════════════════════════════
 describe('fetchAdminEmails()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('UC-A07: merges hardcoded admins with config admins', async () => {
+  it('UC-A07: loads admins from /config/main.adminEmails', async () => {
     mockGetDoc.mockResolvedValueOnce(
-      mockDocSnap(true, { adminEmails: ['custom@admin.com'] })
+      mockDocSnap(true, { adminEmails: ['admin@test.com', 'owner@test.com'] })
     );
     const result = await fetchAdminEmails();
-    // Should contain all hardcoded admins
-    for (const email of ADMIN_EMAILS) {
-      expect(result).toContain(email.toLowerCase());
-    }
-    // Plus the config admin
-    expect(result).toContain('custom@admin.com');
+    expect(result).toEqual(['admin@test.com', 'owner@test.com']);
   });
 
-  it('UC-A08: deduplicates emails ignoring case', async () => {
+  it('UC-A08: normalizes, trims, removes empty values, and deduplicates emails', async () => {
     mockGetDoc.mockResolvedValueOnce(
-      mockDocSnap(true, { adminEmails: ['PHUC.LNK@CYBERLOGITEC.COM'] })
+      mockDocSnap(true, { adminEmails: [' ADMIN@Test.com ', '', 'admin@test.com'] })
     );
     const result = await fetchAdminEmails();
-    const count = result.filter((e) => e === 'phuc.lnk@cyberlogitec.com').length;
-    expect(count).toBe(1);
+    expect(result).toEqual(['admin@test.com']);
   });
 
-  it('UC-A09: falls back to hardcoded list when Firestore read fails', async () => {
+  it('UC-A09: does not fall back to built-in personal emails when Firestore read fails', async () => {
     mockGetDoc.mockRejectedValueOnce(new Error('Network error'));
     const result = await fetchAdminEmails();
-    expect(result).toEqual(ADMIN_EMAILS.map((e) => e.toLowerCase()));
+    expect(result).toEqual([]);
+    expect(ADMIN_EMAILS).toEqual([]);
   });
 
   it('UC-A10: handles missing config document gracefully', async () => {
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
     const result = await fetchAdminEmails();
-    expect(result).toEqual(ADMIN_EMAILS.map((e) => e.toLowerCase()));
+    expect(result).toEqual([]);
   });
 
   it('UC-A11: handles config with empty adminEmails array', async () => {
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { adminEmails: [] }));
     const result = await fetchAdminEmails();
-    expect(result.length).toBe(ADMIN_EMAILS.length);
+    expect(result).toEqual([]);
   });
 
   it('UC-A12: returns cached result on subsequent isAdmin calls after fetch', async () => {
@@ -106,13 +97,11 @@ describe('fetchAdminEmails()', () => {
       mockDocSnap(true, { adminEmails: ['dynamic@test.com'] })
     );
     await fetchAdminEmails();
-    // After fetch, the cached list should include dynamic admin
     expect(isAdmin('dynamic@test.com')).toBe(true);
+    expect(isAdmin('DYNAMIC@TEST.COM')).toBe(true);
   });
 
-  it('UC-A13: ADMIN_EMAILS constant contains expected bootstrap admins', () => {
-    expect(ADMIN_EMAILS).toContain('phuc.lnk@cyberlogitec.com');
-    expect(ADMIN_EMAILS).toContain('anhhao.dl108@gmail.com');
-    expect(ADMIN_EMAILS).not.toContain('hao.nha@cyberlogitec.com'); // removed
+  it('UC-A13: ADMIN_EMAILS compatibility export stays empty', () => {
+    expect(ADMIN_EMAILS).toEqual([]);
   });
 });

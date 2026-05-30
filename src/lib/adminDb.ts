@@ -4,21 +4,39 @@ import {
   doc,
   getDoc,
   getDocs,
+  getCountFromServer,
+  documentId,
   query,
   runTransaction,
   setDoc,
+  startAfter,
   Timestamp,
   updateDoc,
   where,
+  limit,
+  orderBy,
   deleteField,
+  type DocumentData,
+  type QueryDocumentSnapshot,
 } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from './firebase';
+import { db } from './firebase';
 import type { MyBooking, Slot } from './types';
 import { auditLog } from './audit';
+import { captureError } from './monitoring';
+
+export const REGISTRATIONS_PAGE_SIZE = 100;
+const MAX_REGISTRATIONS_EXPORT = 5000;
 
 export interface Registration extends MyBooking {
   email: string;
+}
+
+export type RegistrationPageCursor = QueryDocumentSnapshot<DocumentData>;
+
+export interface RegistrationsPage {
+  items: Registration[];
+  nextCursor: RegistrationPageCursor | null;
+  total: number;
 }
 
 export interface BackfillEmpCodeClaimsResult {
@@ -107,7 +125,8 @@ export async function adminCreateSlot(
   // Chốt chặn nghiệp vụ: 2 ca CÙNG LOẠI không được chồng giờ trong cùng 1 ngày.
   // BTC chốt "mỗi loại chỉ 1 ca / khung giờ" → lịch Step 2 render full-width,
   // KHÔNG cần lane-packing (xem dev_handoff_2/CALENDAR_REDESIGN.md §5.1).
-  const clash = (await listSlots()).find(
+  const sameDaySnap = await getDocs(query(collection(db, 'slots'), where('date', '==', payload.date)));
+  const clash = sameDaySnap.docs.map((d) => slotFromDoc(d.id, d.data())).find(
     (s) =>
       s.slotId !== excludeSlotId &&
       s.type === payload.type &&
@@ -137,31 +156,79 @@ export async function adminCreateSlot(
   return slotId;
 }
 
-/** Delete a slot (admin). Caller should warn about orphan registrations first. */
+/** Delete a slot (admin). Refuses to orphan existing registrations. */
 export async function adminDeleteSlot(adminEmail: string, slotId: string): Promise<void> {
-  await deleteDoc(doc(db, 'slots', slotId));
+  const registrations = await listRegistrationsForSlot(slotId);
+  if (registrations.length > 0) {
+    throw new Error(`Không thể xoá ca ${slotId} vì đang có ${registrations.length} đăng ký. Hãy huỷ hoặc chuyển các đăng ký này trước.`);
+  }
+
+  await runTransaction(db, async (tx) => {
+    const slotRef = doc(db, 'slots', slotId);
+    const slotSnap = await tx.get(slotRef);
+    if (!slotSnap.exists()) return;
+    const slot = slotSnap.data();
+    const capacity = typeof slot.capacity === 'number' ? slot.capacity : 0;
+    const remaining = typeof slot.remaining === 'number' ? slot.remaining : capacity;
+    if (capacity - remaining > 0) {
+      throw new Error(`Không thể xoá ca ${slotId} vì đang có người đăng ký. Tải lại danh sách rồi thử lại.`);
+    }
+    tx.delete(slotRef);
+  });
   void auditLog(adminEmail, 'admin.deleteSlot', { slotId });
 }
 
 // ── Registrations ─────────────────────────────────────────────────────────────
 
-/** List all registrations (admin only). */
+function registrationFromDoc(d: { id: string; data: () => Record<string, any> }): Registration {
+  const data = d.data();
+  return {
+    email: d.id,
+    empCode: data.empCode ?? '',
+    fullName: data.fullName ?? '',
+    bu: data.bu ?? '',
+    speakingSlotId: data.speakingSlotId ?? null,
+    skillsSlotId: data.skillsSlotId ?? null,
+    createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate().toISOString() : null,
+    updatedAt: data.updatedAt ? (data.updatedAt as Timestamp).toDate().toISOString() : null,
+    changeCount: data.changeCount ?? 0,
+  };
+}
+
+export async function countRegistrations(): Promise<number> {
+  const snap = await getCountFromServer(collection(db, 'registrations'));
+  return snap.data().count;
+}
+
+/** Fetch one registrations page (admin only), ordered by email/doc id. */
+export async function listRegistrationsPage(
+  cursor: RegistrationPageCursor | null = null,
+  pageSize = REGISTRATIONS_PAGE_SIZE,
+): Promise<RegistrationsPage> {
+  const constraints = cursor
+    ? [orderBy(documentId()), startAfter(cursor), limit(pageSize)]
+    : [orderBy(documentId()), limit(pageSize)];
+  const [snap, total] = await Promise.all([
+    getDocs(query(collection(db, 'registrations'), ...constraints)),
+    countRegistrations(),
+  ]);
+  return {
+    items: snap.docs.map(registrationFromDoc),
+    nextCursor: snap.docs.length === pageSize ? snap.docs[snap.docs.length - 1] : null,
+    total,
+  };
+}
+
+/** List registrations for full export/legacy callers, bounded as a guardrail. */
 export async function listRegistrations(): Promise<Registration[]> {
-  const snap = await getDocs(collection(db, 'registrations'));
-  return snap.docs.map((d) => {
-    const data = d.data();
-    return {
-      email: d.id,
-      empCode: data.empCode ?? '',
-      fullName: data.fullName ?? '',
-      bu: data.bu ?? '',
-      speakingSlotId: data.speakingSlotId ?? null,
-      skillsSlotId: data.skillsSlotId ?? null,
-      createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate().toISOString() : null,
-      updatedAt: data.updatedAt ? (data.updatedAt as Timestamp).toDate().toISOString() : null,
-      changeCount: data.changeCount ?? 0,
-    };
-  });
+  const snap = await getDocs(query(collection(db, 'registrations'), orderBy(documentId()), limit(MAX_REGISTRATIONS_EXPORT)));
+  if (snap.docs.length === MAX_REGISTRATIONS_EXPORT) {
+    captureError(
+      new Error(`listRegistrations hit cap ${MAX_REGISTRATIONS_EXPORT} — list may be truncated`),
+      { operation: 'listRegistrations.cap' },
+    );
+  }
+  return snap.docs.map(registrationFromDoc);
 }
 
 /** List registrations that booked a specific slot (admin only). */
@@ -172,18 +239,7 @@ export async function listRegistrationsForSlot(slotId: string): Promise<Registra
   ]);
   const out = new Map<string, Registration>();
   const add = (d: any) => {
-    const data = d.data();
-    out.set(d.id, {
-      email: d.id,
-      empCode: data.empCode ?? '',
-      fullName: data.fullName ?? '',
-      bu: data.bu ?? '',
-      speakingSlotId: data.speakingSlotId ?? null,
-      skillsSlotId: data.skillsSlotId ?? null,
-      createdAt: data.createdAt ? (data.createdAt as Timestamp).toDate().toISOString() : null,
-      updatedAt: data.updatedAt ? (data.updatedAt as Timestamp).toDate().toISOString() : null,
-      changeCount: data.changeCount ?? 0,
-    });
+    out.set(d.id, registrationFromDoc(d));
   };
   spSnap.docs.forEach(add);
   skSnap.docs.forEach(add);
@@ -237,7 +293,10 @@ export async function adminDeleteRegistration(adminEmail: string, targetEmail: s
 /** Backfill /empCodeClaims from existing registrations (admin maintenance). */
 export async function backfillEmpCodeClaims(adminEmail: string): Promise<BackfillEmpCodeClaimsResult> {
   void adminEmail;
-  const repair = httpsCallable<Record<string, never>, BackfillEmpCodeClaimsResult>(functions, 'repairEmpCodeClaimsNow');
+  // Lazy-load the Functions SDK only when this admin maintenance runs (keeps it
+  // off the first-paint critical path; AdminPanel is already code-split).
+  const { getFunctions, httpsCallable } = await import('firebase/functions');
+  const repair = httpsCallable<Record<string, never>, BackfillEmpCodeClaimsResult>(getFunctions(), 'repairEmpCodeClaimsNow');
   const res = await repair({});
   return res.data;
 }

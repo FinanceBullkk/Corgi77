@@ -8,6 +8,7 @@ const mockUpdateDoc = vi.fn();
 const mockDeleteDoc = vi.fn();
 const mockGetDoc = vi.fn();
 const mockGetDocs = vi.fn();
+const mockGetCountFromServer = vi.fn();
 const mockAddDoc = vi.fn();
 const mockRunTransaction = vi.fn();
 const mockHttpsCallable = vi.fn();
@@ -18,12 +19,17 @@ vi.mock('firebase/firestore', () => ({
   doc: vi.fn((_db: any, path: string, id?: string) => ({ path: id ? `${path}/${id}` : path })),
   getDoc: (...args: any[]) => mockGetDoc(...args),
   getDocs: (...args: any[]) => mockGetDocs(...args),
+  getCountFromServer: (...args: any[]) => mockGetCountFromServer(...args),
   setDoc: (...args: any[]) => mockSetDoc(...args),
   updateDoc: (...args: any[]) => mockUpdateDoc(...args),
   deleteDoc: (...args: any[]) => mockDeleteDoc(...args),
   runTransaction: (_db: any, fn: any) => mockRunTransaction(fn),
   query: vi.fn((...args: any[]) => args),
   where: vi.fn(),
+  orderBy: vi.fn((field: string) => ({ orderBy: field })),
+  startAfter: vi.fn((cursor: unknown) => ({ startAfter: cursor })),
+  documentId: vi.fn(() => '__name__'),
+  limit: vi.fn((n: number) => ({ limit: n })),
   deleteField: () => 'DELETE_FIELD',
   serverTimestamp: () => 'SERVER_TIMESTAMP',
   Timestamp: {
@@ -33,6 +39,7 @@ vi.mock('firebase/firestore', () => ({
 }));
 
 vi.mock('firebase/functions', () => ({
+  getFunctions: vi.fn(() => ({})),
   httpsCallable: (...args: any[]) => mockHttpsCallable(...args),
 }));
 
@@ -46,6 +53,7 @@ import {
   adminCreateSlot,
   adminDeleteSlot,
   listRegistrations,
+  listRegistrationsPage,
   adminDeleteRegistration,
   backfillEmpCodeClaims,
   updateConfig,
@@ -196,9 +204,47 @@ describe('adminCreateSlot()', () => {
 describe('adminDeleteSlot()', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('UC-AD12: deletes the correct slot document', async () => {
+  it('UC-AD12: deletes the correct slot document when no registrations use it', async () => {
+    mockGetDocs
+      .mockResolvedValueOnce(mockQuerySnap([]))
+      .mockResolvedValueOnce(mockQuerySnap([]));
+    mockRunTransaction.mockImplementationOnce(async (fn: any) => {
+      const txDelete = vi.fn();
+      await fn({
+        get: vi.fn().mockResolvedValueOnce(mockDocSnap(true, { capacity: 10, remaining: 10 })),
+        delete: txDelete,
+      });
+      expect(txDelete).toHaveBeenCalledOnce();
+    });
+
     await adminDeleteSlot('admin@test.com', 'SP-2206-0900');
-    expect(mockDeleteDoc).toHaveBeenCalledOnce();
+    expect(mockDeleteDoc).not.toHaveBeenCalled();
+    expect(mockRunTransaction).toHaveBeenCalledOnce();
+  });
+
+  it('UC-AD12b: refuses to delete a slot referenced by registrations', async () => {
+    mockGetDocs
+      .mockResolvedValueOnce(mockQuerySnap([
+        { id: 'user@test.com', data: () => ({ ...TEST_REGISTRATION, speakingSlotId: 'SP-2206-0900' }) },
+      ]))
+      .mockResolvedValueOnce(mockQuerySnap([]));
+
+    await expect(adminDeleteSlot('admin@test.com', 'SP-2206-0900')).rejects.toThrow('đang có 1 đăng ký');
+    expect(mockRunTransaction).not.toHaveBeenCalled();
+  });
+
+  it('UC-AD12c: refuses to delete when slot counter shows active usage', async () => {
+    mockGetDocs
+      .mockResolvedValueOnce(mockQuerySnap([]))
+      .mockResolvedValueOnce(mockQuerySnap([]));
+    mockRunTransaction.mockImplementationOnce(async (fn: any) => {
+      await fn({
+        get: vi.fn().mockResolvedValueOnce(mockDocSnap(true, { capacity: 10, remaining: 9 })),
+        delete: vi.fn(),
+      });
+    });
+
+    await expect(adminDeleteSlot('admin@test.com', 'SP-2206-0900')).rejects.toThrow('đang có người đăng ký');
   });
 });
 
@@ -243,6 +289,24 @@ describe('listRegistrations()', () => {
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
     const result = await listRegistrations();
     expect(result).toEqual([]);
+  });
+});
+
+describe('listRegistrationsPage()', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns one page plus total registration count', async () => {
+    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([
+      { id: 'user@test.com', data: () => TEST_REGISTRATION },
+    ]));
+    mockGetCountFromServer.mockResolvedValueOnce({ data: () => ({ count: 42 }) });
+
+    const result = await listRegistrationsPage();
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].email).toBe('user@test.com');
+    expect(result.total).toBe(42);
+    expect(result.nextCursor).toBeNull();
   });
 });
 

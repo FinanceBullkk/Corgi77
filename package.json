@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "check": "npm run typecheck && npm test -- --run && npm run check:functions && npm run build",
+    "check:functions": "node --check functions/index.js",
+    "check:rules": "npx --yes firebase-tools@15.19.0 deploy --only firestore:rules --project corgi7-d129d --dry-run",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run",

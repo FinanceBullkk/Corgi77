@@ -21,11 +21,15 @@ export type ClaimSyncState =
   | { status: 'error'; error: string };
 
 export function RegistrationsTab({
-  adminEmail, slots, regs, onReload, claimSync,
+  adminEmail, slots, regs, regsTotal, hasMoreRegs, regsLoadingMore, onLoadMore, onReload, claimSync,
 }: {
   adminEmail: string;
   slots: Slot[];
   regs: Registration[];
+  regsTotal: number;
+  hasMoreRegs: boolean;
+  regsLoadingMore: boolean;
+  onLoadMore: () => void;
   onReload: () => void;
   claimSync: ClaimSyncState;
 }) {
@@ -150,7 +154,7 @@ export function RegistrationsTab({
             {bus.map((b) => <option key={b} value={b}>{b === 'all' ? 'Tất cả BU' : b}</option>)}
           </select>
           <div className="spacer" />
-          <span className="text-sm text-muted">{filtered.length} đăng ký</span>
+          <span className="text-sm text-muted">{filtered.length}/{regsTotal} đăng ký</span>
           {claimSync.status === 'ok' && <span className="text-sm text-muted">Mã NV đã tự đồng bộ</span>}
           <button type="button" className="btn sm" onClick={() => downloadRegistrationsCsv(regs, slots)}>⬇ Xuất CSV ({regs.length})</button>
         </div>
@@ -179,6 +183,13 @@ export function RegistrationsTab({
         </tbody>
       </table>
       {filtered.length === 0 && <div className="empty-state"><div className="es-title">Chưa có đăng ký nào khớp bộ lọc</div></div>}
+      {hasMoreRegs && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--s-4)' }}>
+          <button type="button" className="btn sm" disabled={regsLoadingMore} onClick={onLoadMore}>
+            {regsLoadingMore ? 'Đang tải...' : `Tải thêm (${regs.length}/${regsTotal})`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
