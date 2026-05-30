@@ -1,5 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { listIneligibility, listRegistrations, listSlots, type IneligibilityEntry, type Registration } from './lib/adminDb';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  backfillEmpCodeClaims,
+  listIneligibility,
+  listRegistrations,
+  listSlots,
+  type IneligibilityEntry,
+  type Registration,
+} from './lib/adminDb';
 import { type Slot } from './lib/types';
 import { loadConfig, initials, NAV, HEADER, type Tab, type ConfigState } from './admin/admin-utils';
 import { NavIcon } from './admin/admin-icons';
@@ -20,13 +27,22 @@ export function AdminPanel({ adminEmail, onExit }: { adminEmail: string; onExit:
   const [inelig, setInelig] = useState<IneligibilityEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const didAutoSyncClaims = useRef(false);
 
   useEffect(() => {
     setErr(null);
     Promise.all([listSlots(), listRegistrations(), loadConfig(), listIneligibility()])
-      .then(([s, r, c, i]) => { setSlots(s); setRegs(r); setCfg(c); setInelig(i); })
+      .then(([s, r, c, i]) => {
+        setSlots(s); setRegs(r); setCfg(c); setInelig(i);
+        if (!didAutoSyncClaims.current && r.length > 0) {
+          didAutoSyncClaims.current = true;
+          backfillEmpCodeClaims(adminEmail).catch((e) => {
+            console.warn('Auto-sync empCodeClaims failed:', e);
+          });
+        }
+      })
       .catch((e: Error) => setErr(e.message));
-  }, [reloadKey]);
+  }, [adminEmail, reloadKey]);
 
   const reload = () => setReloadKey((n) => n + 1);
 
