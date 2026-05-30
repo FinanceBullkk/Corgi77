@@ -32,11 +32,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set up Java for Firebase emulators
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Typecheck
         run: npm run typecheck
 
       - name: Test
         run: npm test -- --run
+
+      - name: Test Firestore rules in emulator
+        run: npm run test:rules
 
       - name: Check Cloud Functions syntax
         run: npm run check:functions

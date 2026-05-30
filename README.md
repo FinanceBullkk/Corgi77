@@ -166,13 +166,14 @@ Mặc định Vite chạy ở `http://localhost:5173`.
 npm run dev              # local Vite dev server
 npm run typecheck        # TypeScript check
 npm test -- --run        # Vitest
+npm run test:rules       # Firestore rules emulator tests (cần Java)
 npm run check:functions  # syntax check functions/index.js
 npm run check:rules      # Firebase dry-run compile firestore.rules
 npm run build            # production build
 npm run check            # typecheck + test + functions syntax + build
 ```
 
-`check:rules` cần Firebase CLI login/service account vì nó gọi API compile rules của Firebase.
+`test:rules` chạy Firestore emulator nên cần Java runtime. `check:rules` cần Firebase CLI login/service account vì nó gọi API compile rules của Firebase.
 
 ## Deploy
 
@@ -210,6 +211,7 @@ Nếu chỉ đổi UI, deploy Hosting là đủ. Nếu đổi `functions/index.j
 
 - `npm run typecheck`
 - `npm test -- --run`
+- `npm run test:rules`
 - `npm run check:functions`
 - `npm run check:rules`
 - `npm run build`
