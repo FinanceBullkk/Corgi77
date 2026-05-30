@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { formatDateVi, minToHHmm, type InitResult } from './lib/types';
 import { initDb, bookDb } from './lib/db';
 import { fetchAdminEmails, isAdmin } from './lib/admin';
-import { AdminPanel } from './AdminPanel';
 import { onAuth, signInWithGoogle, signOutUser } from './lib/firebase';
 import type { User } from 'firebase/auth';
 import { ConfirmProvider, useConfirm, useToast } from './confirm-toast-provider';
@@ -14,6 +13,9 @@ import { CalendarStep } from './booking/calendar-step';
 import { ConfirmModal } from './booking/confirm-modal';
 import { SuccessScreen } from './booking/success-screen';
 import { BookingDisplay } from './booking/booking-display';
+
+// Lazy-loaded so the admin bundle is code-split out of the booking critical path.
+const AdminPanel = lazy(() => import('./AdminPanel').then((m) => ({ default: m.AdminPanel })));
 
 // ─── App ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +38,7 @@ function AppInner() {
   const [step1, setStep1] = useState<Step1Data>({ empCode: '', fullName: '', bu: '' });
   const [selection, setSelection] = useState<Selection>({ speakingId: null, skillsId: null });
   const [isEditing, setIsEditing] = useState(false);
+  const [emailQueued, setEmailQueued] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [canAdmin, setCanAdmin] = useState(false);
   const skewRef = useRef(0);
@@ -189,7 +192,11 @@ function AppInner() {
   }
 
   if (adminOpen) {
-    return <AdminPanel adminEmail={data.email} onExit={() => setAdminOpen(false)} />;
+    return (
+      <Suspense fallback={<div className="loading"><span className="spinner" /> Đang tải…</div>}>
+        <AdminPanel adminEmail={data.email} onExit={() => setAdminOpen(false)} />
+      </Suspense>
+    );
   }
 
   const deadlineInfo = computeDeadline(data.deadline, data.serverNow, data.deadlinePassed, skewRef.current);
@@ -279,6 +286,7 @@ function AppInner() {
         } else if (res.state) {
           setData(res.state);
           setIsEditing(false);
+          setEmailQueued(!!res.emailSent);
           setScreen('success');
         } else {
           pushToast('error', 'Đăng ký thành công nhưng không nhận được state. Tải lại trang.');
@@ -369,6 +377,7 @@ function AppInner() {
         <main className="container">
           <SuccessScreen
             email={data.email}
+            emailSent={emailQueued}
             step1={step1}
             slots={data.slots}
             selection={selection}
@@ -408,7 +417,9 @@ function AppInner() {
             onCancelled={(newState) => {
               pushToast('success', 'Đã hủy đăng ký.');
               setData(newState);
-              setStep1({ empCode: '', fullName: '', bu: '' });
+              // Keep the student's identity (mã NV / tên / BU) pre-filled — only the
+              // booking was cancelled, not who they are. Resetting it forced a re-type
+              // on the auto-returned Step 1. Only the slot selection is cleared.
               setSelection({ speakingId: null, skillsId: null });
               setIsEditing(false);
               setScreen('step1');

@@ -6,6 +6,7 @@ import { minToHHmm, type Slot } from '../lib/types';
 
 export function SuccessScreen({
   email,
+  emailSent,
   step1,
   slots,
   selection,
@@ -14,6 +15,7 @@ export function SuccessScreen({
   onViewDetail,
 }: {
   email: string;
+  emailSent: boolean;
   step1: Step1Data;
   slots: Slot[];
   selection: Selection;
@@ -59,9 +61,11 @@ export function SuccessScreen({
       <div className="card">
         <div className="card-hd">
           <div className="card-title">Lịch thi của bạn</div>
-          <div className="card-sub">
-            Email xác nhận đã gửi đến <b>{email}</b>.
-          </div>
+          {emailSent && (
+            <div className="card-sub">
+              Email xác nhận đang được gửi đến <b>{email}</b>.
+            </div>
+          )}
         </div>
         <div className="card-bd">
           <div className="col" style={{ gap: 'var(--s-3)' }}>
