@@ -42,6 +42,7 @@ import {
   adminDeleteSlot,
   listRegistrations,
   adminDeleteRegistration,
+  backfillEmpCodeClaims,
   updateConfig,
   updateSlot,
   listIneligibility,
@@ -389,5 +390,33 @@ describe('deleteIneligibility()', () => {
   it('UC-AD29: deletes the correct ineligibility document', async () => {
     await deleteIneligibility('admin@test.com', '262010');
     expect(mockDeleteDoc).toHaveBeenCalledOnce();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UC-AD30: backfillEmpCodeClaims() — Create uniqueness claims for old data
+// ═══════════════════════════════════════════════════════════════════════════
+describe('backfillEmpCodeClaims()', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('UC-AD30: creates claims for unique empCodes and skips duplicates', async () => {
+    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([
+      { id: 'user@test.com', data: () => TEST_REGISTRATION },
+      { id: 'other@test.com', data: () => ({ ...TEST_REGISTRATION, email: 'other@test.com', empCode: '262011' }) },
+      { id: 'dup1@test.com', data: () => ({ ...TEST_REGISTRATION, email: 'dup1@test.com', empCode: '262111' }) },
+      { id: 'dup2@test.com', data: () => ({ ...TEST_REGISTRATION, email: 'dup2@test.com', empCode: '262111' }) },
+    ]));
+    mockGetDoc.mockResolvedValue(mockDocSnap(false));
+
+    const result = await backfillEmpCodeClaims('admin@test.com');
+
+    expect(result.created).toBe(2);
+    expect(result.skippedDuplicates).toEqual([
+      { empCode: '262111', emails: ['dup1@test.com', 'dup2@test.com'] },
+    ]);
+    expect(mockSetDoc.mock.calls.map(([ref, payload]) => [ref.path, payload.email])).toEqual([
+      ['empCodeClaims/262010', 'user@test.com'],
+      ['empCodeClaims/262011', 'other@test.com'],
+    ]);
   });
 });

@@ -12,7 +12,8 @@ export type AuditEvent =
   | 'admin.deleteSlot'
   | 'admin.updateConfig'
   | 'admin.upsertIneligibility'
-  | 'admin.deleteIneligibility';
+  | 'admin.deleteIneligibility'
+  | 'admin.backfillEmpCodeClaims';
 
 /**
  * Append an immutable entry to /auditLogs.

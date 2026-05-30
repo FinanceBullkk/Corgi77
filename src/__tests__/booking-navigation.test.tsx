@@ -132,6 +132,7 @@ describe('Booking navigation — step-1 form retention', () => {
     await user.type(screen.getByPlaceholderText('VD: 262010'), '262010');
     await user.type(screen.getByPlaceholderText('NGUYEN VAN AN'), 'NGUYEN VAN A');
     await user.selectOptions(screen.getByRole('combobox'), 'BSG');
+    await screen.findByText('✓ Hợp lệ');
 
     await user.click(screen.getByRole('button', { name: /Tiếp tục/ }));
     await screen.findByText('Chọn 2 ca thi của bạn');

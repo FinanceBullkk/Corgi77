@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Stepper } from './booking-chrome';
 import { BU_LIST, toUpperNoAccent, type Step1Data } from './booking-utils';
 import { checkIneligibility } from '../lib/db';
@@ -21,12 +21,41 @@ export function Step1Form({
   const [bu, setBu] = useState(initial.bu);
   const [checking, setChecking] = useState(false);
   const [blockErr, setBlockErr] = useState<string | null>(null);
+  const [checkedEmpCode, setCheckedEmpCode] = useState('');
 
   const empValid = /^\d{6}$/.test(empCode);
   const nameValid = fullName.trim().length >= 2;
   const buValid = BU_LIST.includes(bu);
-  const allValid = empValid && nameValid && buValid;
-  const validCount = [empValid, nameValid, buValid].filter(Boolean).length;
+  const empAvailable = empValid && checkedEmpCode === empCode && !blockErr;
+  const allValid = empAvailable && nameValid && buValid;
+  const validCount = [empAvailable, nameValid, buValid].filter(Boolean).length;
+
+  useEffect(() => {
+    setBlockErr(null);
+    setCheckedEmpCode('');
+    if (!empValid) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setChecking(true);
+      try {
+        const reason = await checkIneligibility(empCode, email);
+        if (cancelled) return;
+        if (reason) {
+          setBlockErr(reason);
+        } else {
+          setCheckedEmpCode(empCode);
+        }
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [email, empCode, empValid]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -68,14 +97,15 @@ export function Step1Form({
               className={`input ${(empCode && !empValid) || blockErr ? 'error' : ''}`}
               placeholder="VD: 262010"
               value={empCode}
-              onChange={(e) => { setEmpCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setBlockErr(null); }}
+              onChange={(e) => setEmpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               inputMode="numeric"
               maxLength={6}
               autoFocus
             />
             {empCode && !empValid && <span className="help error">⚠ Mã NV phải có đúng 6 chữ số</span>}
             {blockErr && <span className="help error">{blockErr}</span>}
-            {empValid && !blockErr && <span className="help success">✓ Hợp lệ</span>}
+            {empValid && checking && !blockErr && <span className="help">Đang kiểm tra mã NV...</span>}
+            {empAvailable && !checking && <span className="help success">✓ Hợp lệ</span>}
           </div>
 
           <div className="field">
