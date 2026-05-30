@@ -631,31 +631,46 @@ describe('bookDb() — concurrency', () => {
     mockGetDocs.mockImplementation(async () => mockQuerySnap([]));
   });
 
-  it('UC-DB29: two users booking same slot with remaining=1 — only first succeeds', async () => {
-    // We need to track remaining as it changes between transactions
-    let spRemaining = 1;
-    let skRemaining = 1;
+  // ── Faithful transaction model: serializable isolation ──────────────────────
+  // Firestore transactions are serializable — the net effect of contention +
+  // internal retry is that transactions apply one-at-a-time against the latest
+  // committed state. We model that OUTCOME directly: a shared path-keyed store +
+  // a global commit lock so each tx reads the latest writes and applies its own.
+  // These tests now derive success/failure from REAL writes (no hand-fed
+  // `remaining`), so a regression that drops the capacity check would actually
+  // oversell and FAIL here. (Scope: tests the serializable outcome, not the retry
+  // wire-protocol — UC-DB35 covers retry plumbing; full fidelity would use
+  // @firebase/rules-unit-testing against the emulator.)
+  function installSerialTxStore(seed: Record<string, Record<string, any>>) {
+    const store = new Map<string, Record<string, any>>();
+    for (const [path, data] of Object.entries(seed)) store.set(path, { ...data });
+    let lock: Promise<unknown> = Promise.resolve();
+    mockRunTransaction.mockImplementation((fn: any) => {
+      const run = lock.then(async () => {
+        const tx = {
+          get: async (ref: any) => {
+            const d = store.get(ref.path);
+            return mockDocSnap(!!d, d);
+          },
+          set: (ref: any, data: any) => { store.set(ref.path, { ...data }); },
+          update: (ref: any, data: any) => {
+            store.set(ref.path, { ...(store.get(ref.path) ?? {}), ...data });
+          },
+          delete: (ref: any) => { store.delete(ref.path); },
+        };
+        await fn(tx);
+      });
+      lock = run.catch(() => {}); // keep the chain alive even if a tx body throws
+      return run;
+    });
+    return store;
+  }
 
-    let txCall = 0;
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      if (txCall === 0) {
-        // User A — remaining=1
-        txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-        txGet.mockResolvedValueOnce(mockDocSnap(false));
-        txGet.mockResolvedValueOnce(mockDocSnap(false));
-        txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: spRemaining }));
-        txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: skRemaining }));
-      } else {
-        // User B — remaining should be 0 after A succeeds
-        txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-        txGet.mockResolvedValueOnce(mockDocSnap(false));
-        txGet.mockResolvedValueOnce(mockDocSnap(false));
-        txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 0 }));
-        txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 0 }));
-      }
-      txCall++;
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+  it('UC-DB29: two users booking same slot with remaining=1 — only first succeeds', async () => {
+    const store = installSerialTxStore({
+      'config/main': TEST_CONFIG,
+      'slots/SP-2206-0900': { ...TEST_SLOT_SPEAKING, remaining: 1 },
+      'slots/3S-2206-1100': { ...TEST_SLOT_SKILLS, remaining: 1 },
     });
 
     const [resultA, resultB] = await Promise.all([
@@ -668,9 +683,12 @@ describe('bookDb() — concurrency', () => {
         speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
       }),
     ]);
-    expect(resultA.ok).toBe(true);
-    expect(resultB.ok).toBe(false);
-    expect(resultB.error).toContain('hết chỗ');
+
+    // Exactly one wins; the loser re-reads the REAL decremented remaining (0).
+    expect([resultA.ok, resultB.ok].filter(Boolean)).toHaveLength(1);
+    const loser = resultA.ok ? resultB : resultA;
+    expect(loser.error).toContain('hết chỗ');
+    expect(store.get('slots/SP-2206-0900')!.remaining).toBe(0);
   });
 
   it('UC-DB30: two users booking different slots simultaneously — both succeed', async () => {
@@ -712,20 +730,10 @@ describe('bookDb() — concurrency', () => {
   });
 
   it('UC-DB31: two users booking last seat in Skills slot — one succeeds, one fails', async () => {
-    let txCall = 0;
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
-      if (txCall === 0) {
-        txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 1 }));
-      } else {
-        txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 0 }));
-      }
-      txCall++;
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+    const store = installSerialTxStore({
+      'config/main': TEST_CONFIG,
+      'slots/SP-2206-0900': { ...TEST_SLOT_SPEAKING, remaining: 5 },
+      'slots/3S-2206-1100': { ...TEST_SLOT_SKILLS, remaining: 1 },
     });
 
     const [resultA, resultB] = await Promise.all([
@@ -738,9 +746,12 @@ describe('bookDb() — concurrency', () => {
         speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
       }),
     ]);
-    expect(resultA.ok).toBe(true);
-    expect(resultB.ok).toBe(false);
-    expect(resultB.error).toContain('hết chỗ');
+
+    // The Skills slot has the last seat — exactly one booking wins it.
+    expect([resultA.ok, resultB.ok].filter(Boolean)).toHaveLength(1);
+    const loser = resultA.ok ? resultB : resultA;
+    expect(loser.error).toContain('hết chỗ');
+    expect(store.get('slots/3S-2206-1100')!.remaining).toBe(0);
   });
 
   it('UC-DB32: same user double-clicks book — second call updates (not duplicate)', async () => {
@@ -862,38 +873,29 @@ describe('bookDb() — concurrency', () => {
     expect(attempts).toBe(3);
   });
 
-  it('UC-DB36: 20 users book same slot with capacity=10 — only first 10 succeed', async () => {
+  it('UC-DB36: 20 users book same slot with remaining=10 — only first 10 succeed', async () => {
     const TOTAL_USERS = 20;
-    const CAPACITY = 10;
-
-    let txCall = 0;
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      const remaining = Math.max(0, CAPACITY - txCall);
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 100 }));
-      txCall++;
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+    const SEATS = 10;
+    const store = installSerialTxStore({
+      'config/main': TEST_CONFIG,
+      'slots/SP-2206-0900': { ...TEST_SLOT_SPEAKING, remaining: SEATS },
+      'slots/3S-2206-1100': { ...TEST_SLOT_SKILLS, remaining: 100 },
     });
 
-    const emails = Array.from({ length: TOTAL_USERS }, (_, i) => `user${i}@test.com`);
     const results = await Promise.all(
-      emails.map((email) =>
-        bookDb(email, {
-          empCode: String(262000 + (parseInt(email) || 0)).padStart(6, '0'),
-          fullName: `User ${email}`, bu: 'IT',
+      Array.from({ length: TOTAL_USERS }, (_, i) =>
+        bookDb(`user${i}@test.com`, {
+          empCode: String(262000 + i).padStart(6, '0'),
+          fullName: `User ${i}`, bu: 'IT',
           speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
         }),
       ),
     );
 
-    const successes = results.filter((r) => r.ok).length;
-    const failures = results.filter((r) => !r.ok).length;
-    expect(successes).toBe(CAPACITY);
-    expect(failures).toBe(TOTAL_USERS - CAPACITY);
+    // Real writes decrement the shared seat count — exactly SEATS bookings win.
+    expect(results.filter((r) => r.ok)).toHaveLength(SEATS);
+    expect(results.filter((r) => !r.ok)).toHaveLength(TOTAL_USERS - SEATS);
+    expect(store.get('slots/SP-2206-0900')!.remaining).toBe(0);
   });
 
   it('UC-DB37: 20 users book 10 different slots (2 users per slot) — all succeed when capacity allows', async () => {
@@ -943,36 +945,27 @@ describe('bookDb() — concurrency', () => {
     }
   });
 
-  it('UC-DB38: 20 users race on slot with capacity=1 — exactly 1 succeeds, rest fail', async () => {
+  it('UC-DB38: 20 users race on slot with remaining=1 — exactly 1 succeeds, rest fail', async () => {
     const TOTAL_USERS = 20;
-
-    let txCall = 0;
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      const remaining = txCall === 0 ? 1 : 0;
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 100 }));
-      txCall++;
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+    const store = installSerialTxStore({
+      'config/main': TEST_CONFIG,
+      'slots/SP-2206-0900': { ...TEST_SLOT_SPEAKING, remaining: 1 },
+      'slots/3S-2206-1100': { ...TEST_SLOT_SKILLS, remaining: 100 },
     });
 
-    const emails = Array.from({ length: TOTAL_USERS }, (_, i) => `user${i}@test.com`);
     const results = await Promise.all(
-      emails.map((email) =>
-        bookDb(email, {
-          empCode: String(262000 + (parseInt(email.replace(/\D/g, '')) || 0)).padStart(6, '0'),
-          fullName: `User ${email}`, bu: 'IT',
+      Array.from({ length: TOTAL_USERS }, (_, i) =>
+        bookDb(`user${i}@test.com`, {
+          empCode: String(262000 + i).padStart(6, '0'),
+          fullName: `User ${i}`, bu: 'IT',
           speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
         }),
       ),
     );
 
-    const successes = results.filter((r) => r.ok).length;
-    const failures = results.filter((r) => !r.ok).length;
-    expect(successes).toBe(1);
-    expect(failures).toBe(TOTAL_USERS - 1);
+    // Single seat, 20 racers — the shared store guarantees exactly one winner.
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toHaveLength(TOTAL_USERS - 1);
+    expect(store.get('slots/SP-2206-0900')!.remaining).toBe(0);
   });
 });

@@ -301,31 +301,33 @@ describe('SEC: Privilege Escalation', () => {
     );
   });
 
-  it('SEC-11: Registration with victim email -> Firestore rule enforces auth.token.email == email', async () => {
+  it('SEC-11: registration is written under the victim email as doc id (the gate rules check)', async () => {
     setupPreflight();
 
+    let setPath = '';
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();
+      // Correct read order: config, registration, cancelledQuota, speaking, skills
       txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
+      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no existing registration
+      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no saved quota
       txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
       txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+      await fn({ get: txGet, set: (ref: any) => { setPath = ref.path; }, update: vi.fn(), delete: vi.fn() });
     });
 
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
-    // Client-side: bookDb doesn't verify email ownership (server enforces)
+    // The client does NOT verify email ownership — it writes the registration keyed
+    // by the email argument. The Firestore rule `auth.token.email == email` is the
+    // real gate (a caller can only write their OWN email's doc). Assert the doc id.
     await bookDb('victim@company.com', {
-      empCode: '262010',
-      fullName: 'Attacker',
-      bu: 'IT',
-      speakingSlotId: 'SP-2206-0900',
-      skillsSlotId: '3S-2206-1100',
+      empCode: '262010', fullName: 'Attacker', bu: 'IT',
+      speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
     });
-    // Document: client may succeed, server blocks via Firestore rules
+    expect(setPath).toBe('registrations/victim@company.com');
   });
 
   it('SEC-12: Admin email homograph / case attacks -> rejected', () => {
@@ -656,16 +658,30 @@ describe('SEC: Deadline & Clock Manipulation', () => {
 describe('SEC: Data Exfiltration', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('SEC-28: Eligibility list scrape via list query -> requires admin', () => {
-    expect(true).toBe(true);
+  it('SEC-28: eligibility check reads a single doc, never lists the collection', async () => {
+    // requireEligibility on → checkIneligibility uses getDoc(eligibility/{code}),
+    // never getDocs(list), so a signed-in user cannot scrape the allowlist.
+    mockGetDoc.mockImplementation(async (ref: any) =>
+      ref.path === 'config/main'
+        ? mockDocSnap(true, { requireEligibility: true })
+        : mockDocSnap(false),
+    );
+    await checkIneligibility('262010');
+    expect(mockGetDocs).not.toHaveBeenCalled();
   });
 
-  it('SEC-29: Ineligibility list scrape -> requires admin', () => {
-    expect(true).toBe(true);
+  it('SEC-29: blocklist check reads a single doc, never lists the collection', async () => {
+    mockGetDoc.mockResolvedValue(mockDocSnap(false));
+    await checkIneligibility('262010');
+    expect(mockGetDocs).not.toHaveBeenCalled();
   });
 
-  it('SEC-30: Registration data scrape -> users can only read own registration', () => {
-    expect(true).toBe(true);
+  it('SEC-30: initDb reads only the caller’s own registration doc by id', async () => {
+    mockGetDoc.mockResolvedValue(mockDocSnap(false));
+    mockGetDocs.mockResolvedValue(mockQuerySnap([]));
+    await initDb('user@test.com');
+    const paths = mockGetDoc.mock.calls.map((c: any[]) => c[0]?.path);
+    expect(paths).toContain('registrations/user@test.com');
   });
 });
 
@@ -676,17 +692,13 @@ describe('SEC: Data Exfiltration', () => {
 describe('SEC: Audit Tampering', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('SEC-31: Attacker tries to update audit log entry -> blocked by rules', () => {
-    expect(true).toBe(true);
-  });
-
-  it('SEC-32: Attacker tries to delete audit log entry -> blocked by rules', () => {
-    expect(true).toBe(true);
-  });
-
-  it('SEC-33: Non-admin reads audit logs -> blocked by rules', () => {
-    expect(true).toBe(true);
-  });
+  // Audit-log immutability/read-control is enforced purely in firestore.rules
+  // (auditLogs: update,delete = false; read = isAdmin). There is no client code
+  // path to exercise, so a unit test cannot honestly assert it — skipped with
+  // intent documented. Verify via @firebase/rules-unit-testing against the emulator.
+  it.skip('SEC-31: audit log update blocked — firestore.rules auditLogs update:false', () => {});
+  it.skip('SEC-32: audit log delete blocked — firestore.rules auditLogs delete:false', () => {});
+  it.skip('SEC-33: non-admin audit log read blocked — firestore.rules auditLogs read:isAdmin', () => {});
 });
 
 // ======================================================================
