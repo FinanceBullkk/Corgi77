@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 import { type Slot } from '../lib/types';
 import {
   adminDeleteRegistration,
-  backfillEmpCodeClaims,
   downloadRegistrationsCsv,
+  type BackfillEmpCodeClaimsResult,
   type Registration,
 } from '../lib/adminDb';
 import { useConfirm, useToast } from '../confirm-toast-provider';
@@ -13,9 +13,22 @@ import { RowMenu } from './admin-chrome';
 
 // ── Registrations (Đăng ký) ───────────────────────────────────────────────────
 
+export type ClaimSyncState =
+  | { status: 'idle' }
+  | { status: 'running' }
+  | { status: 'ok'; result: BackfillEmpCodeClaimsResult }
+  | { status: 'attention'; result: BackfillEmpCodeClaimsResult }
+  | { status: 'error'; error: string };
+
 export function RegistrationsTab({
-  adminEmail, slots, regs, onReload,
-}: { adminEmail: string; slots: Slot[]; regs: Registration[]; onReload: () => void }) {
+  adminEmail, slots, regs, onReload, claimSync,
+}: {
+  adminEmail: string;
+  slots: Slot[];
+  regs: Registration[];
+  onReload: () => void;
+  claimSync: ClaimSyncState;
+}) {
   const [q, setQ] = useState('');
   const [bu, setBu] = useState('all');
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -99,30 +112,26 @@ export function RegistrationsTab({
     downloadRegistrationsCsv(chosen, slots);
   };
 
-  const syncEmpCodeClaims = async () => {
-    const ok = await confirm({
-      title: 'Đồng bộ khóa mã NV?',
-      message: 'Tạo empCodeClaims cho các đăng ký hiện có. Mã NV đang bị trùng sẽ được bỏ qua để admin xử lý trước.',
-      confirmText: 'Đồng bộ',
-    });
-    if (!ok) return;
-    setBusy(true);
-    try {
-      const res = await backfillEmpCodeClaims(adminEmail);
-      onReload();
-      const skipped = res.skippedDuplicates.length;
-      const conflicts = res.conflicts.length;
-      if (skipped || conflicts) {
-        toast('error', `Đã tạo ${res.created}, giữ ${res.kept}. Còn ${skipped} mã trùng, ${conflicts} claim lệch cần xử lý.`);
-      } else {
-        toast('success', `Đã đồng bộ mã NV: tạo ${res.created}, giữ ${res.kept}.`);
-      }
-    } catch (e) {
-      toast('error', (e as Error).message);
-    } finally {
-      setBusy(false);
+  const claimSyncBanner = (() => {
+    if (claimSync.status === 'running') {
+      return <div className="banner info mb-4"><div>Đang tự đồng bộ khóa mã NV...</div></div>;
     }
-  };
+    if (claimSync.status === 'error') {
+      return <div className="banner danger mb-4"><div>Tự đồng bộ mã NV thất bại: {claimSync.error}</div></div>;
+    }
+    if (claimSync.status === 'attention') {
+      const { result } = claimSync;
+      const dupes = result.skippedDuplicates.map((d) => `${d.empCode} (${d.emails.join(', ')})`).join('; ');
+      return (
+        <div className="banner warn mb-4">
+          <div>
+            Đã tự đồng bộ mã NV: tạo {result.created}, giữ {result.kept}. Còn {result.skippedDuplicates.length} mã trùng cần xóa bớt registration trước khi hệ thống tạo khóa: {dupes || 'không có'}.
+          </div>
+        </div>
+      );
+    }
+    return null;
+  })();
 
   return (
     <div className="panel">
@@ -142,10 +151,11 @@ export function RegistrationsTab({
           </select>
           <div className="spacer" />
           <span className="text-sm text-muted">{filtered.length} đăng ký</span>
-          <button type="button" className="btn sm" disabled={busy} onClick={syncEmpCodeClaims}>Đồng bộ mã NV</button>
+          {claimSync.status === 'ok' && <span className="text-sm text-muted">Mã NV đã tự đồng bộ</span>}
           <button type="button" className="btn sm" onClick={() => downloadRegistrationsCsv(regs, slots)}>⬇ Xuất CSV ({regs.length})</button>
         </div>
       )}
+      {claimSyncBanner}
       <table className="dgrid">
         <thead>
           <tr>

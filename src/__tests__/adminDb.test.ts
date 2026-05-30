@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mock firebase module BEFORE importing adminDb.ts ──
-vi.mock('../lib/firebase', () => ({ db: {} }));
+vi.mock('../lib/firebase', () => ({ db: {}, functions: {} }));
 
 const mockSetDoc = vi.fn();
 const mockUpdateDoc = vi.fn();
@@ -10,6 +10,7 @@ const mockGetDoc = vi.fn();
 const mockGetDocs = vi.fn();
 const mockAddDoc = vi.fn();
 const mockRunTransaction = vi.fn();
+const mockHttpsCallable = vi.fn();
 
 vi.mock('firebase/firestore', () => ({
   addDoc: (...args: any[]) => mockAddDoc(...args),
@@ -29,6 +30,10 @@ vi.mock('firebase/firestore', () => ({
     now: () => ({ toDate: () => new Date() }),
     fromDate: (d: Date) => ({ toDate: () => d }),
   },
+}));
+
+vi.mock('firebase/functions', () => ({
+  httpsCallable: (...args: any[]) => mockHttpsCallable(...args),
 }));
 
 vi.mock('../lib/audit', () => ({
@@ -397,16 +402,21 @@ describe('deleteIneligibility()', () => {
 // UC-AD30: backfillEmpCodeClaims() — Create uniqueness claims for old data
 // ═══════════════════════════════════════════════════════════════════════════
 describe('backfillEmpCodeClaims()', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHttpsCallable.mockReset();
+  });
 
-  it('UC-AD30: creates claims for unique empCodes and skips duplicates', async () => {
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([
-      { id: 'user@test.com', data: () => TEST_REGISTRATION },
-      { id: 'other@test.com', data: () => ({ ...TEST_REGISTRATION, email: 'other@test.com', empCode: '262011' }) },
-      { id: 'dup1@test.com', data: () => ({ ...TEST_REGISTRATION, email: 'dup1@test.com', empCode: '262111' }) },
-      { id: 'dup2@test.com', data: () => ({ ...TEST_REGISTRATION, email: 'dup2@test.com', empCode: '262111' }) },
-    ]));
-    mockGetDoc.mockResolvedValue(mockDocSnap(false));
+  it('UC-AD30: calls Cloud Function repairEmpCodeClaimsNow', async () => {
+    const callable = vi.fn().mockResolvedValue({
+      data: {
+        created: 2,
+        kept: 0,
+        skippedDuplicates: [{ empCode: '262111', emails: ['dup1@test.com', 'dup2@test.com'] }],
+        conflicts: [],
+      },
+    });
+    mockHttpsCallable.mockReturnValue(callable);
 
     const result = await backfillEmpCodeClaims('admin@test.com');
 
@@ -414,9 +424,7 @@ describe('backfillEmpCodeClaims()', () => {
     expect(result.skippedDuplicates).toEqual([
       { empCode: '262111', emails: ['dup1@test.com', 'dup2@test.com'] },
     ]);
-    expect(mockSetDoc.mock.calls.map(([ref, payload]) => [ref.path, payload.email])).toEqual([
-      ['empCodeClaims/262010', 'user@test.com'],
-      ['empCodeClaims/262011', 'other@test.com'],
-    ]);
+    expect(mockHttpsCallable).toHaveBeenCalledWith({}, 'repairEmpCodeClaimsNow');
+    expect(callable).toHaveBeenCalledWith({});
   });
 });

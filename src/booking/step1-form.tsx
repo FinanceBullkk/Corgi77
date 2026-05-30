@@ -21,6 +21,7 @@ export function Step1Form({
   const [bu, setBu] = useState(initial.bu);
   const [checking, setChecking] = useState(false);
   const [blockErr, setBlockErr] = useState<string | null>(null);
+  const [networkWarn, setNetworkWarn] = useState(false);
   const [checkedEmpCode, setCheckedEmpCode] = useState('');
 
   const empValid = /^\d{6}$/.test(empCode);
@@ -32,6 +33,7 @@ export function Step1Form({
 
   useEffect(() => {
     setBlockErr(null);
+    setNetworkWarn(false);
     setCheckedEmpCode('');
     if (!empValid) return;
 
@@ -43,9 +45,16 @@ export function Step1Form({
         if (cancelled) return;
         if (reason) {
           setBlockErr(reason);
+          setNetworkWarn(false);
         } else {
+          setNetworkWarn(false);
           setCheckedEmpCode(empCode);
         }
+      } catch {
+        if (cancelled) return;
+        // Network error — allow button but show soft warning (not green ✓)
+        setNetworkWarn(true);
+        setCheckedEmpCode(empCode);
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -65,10 +74,14 @@ export function Step1Form({
     try {
       // Pre-flight empCode checks. bookDb() still enforces the same checks in
       // its transaction so this Step 1 gate stays a UX fast-fail, not the only guard.
-      const reason = await checkIneligibility(empCode, email);
-      if (reason) {
-        setBlockErr(reason);
-        return;
+      try {
+        const reason = await checkIneligibility(empCode, email);
+        if (reason) {
+          setBlockErr(reason);
+          return;
+        }
+      } catch {
+        // Network error at submit gate — proceed; server will enforce on write
       }
       onContinue({ empCode, fullName: fullName.trim(), bu });
     } finally {
@@ -105,7 +118,8 @@ export function Step1Form({
             {empCode && !empValid && <span className="help error">⚠ Mã NV phải có đúng 6 chữ số</span>}
             {blockErr && <span className="help error">{blockErr}</span>}
             {empValid && checking && !blockErr && <span className="help">Đang kiểm tra mã NV...</span>}
-            {empAvailable && !checking && <span className="help success">✓ Hợp lệ</span>}
+            {empAvailable && !checking && !networkWarn && <span className="help success">✓ Hợp lệ</span>}
+            {empAvailable && !checking && networkWarn && <span className="help">⚠ Không xác minh được (lỗi mạng) — hệ thống sẽ kiểm tra lại khi đăng ký</span>}
           </div>
 
           <div className="field">

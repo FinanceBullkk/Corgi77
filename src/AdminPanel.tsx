@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   backfillEmpCodeClaims,
   listIneligibility,
@@ -11,7 +11,7 @@ import { type Slot } from './lib/types';
 import { loadConfig, initials, NAV, HEADER, type Tab, type ConfigState } from './admin/admin-utils';
 import { NavIcon } from './admin/admin-icons';
 import { Overview } from './admin/overview-tab';
-import { RegistrationsTab } from './admin/registrations-tab';
+import { RegistrationsTab, type ClaimSyncState } from './admin/registrations-tab';
 import { SlotsTab } from './admin/slots-tab';
 import { IneligibilityTab } from './admin/ineligibility-tab';
 import { ConfigTab } from './admin/config-tab';
@@ -27,21 +27,34 @@ export function AdminPanel({ adminEmail, onExit }: { adminEmail: string; onExit:
   const [inelig, setInelig] = useState<IneligibilityEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const didAutoSyncClaims = useRef(false);
+  const [claimSync, setClaimSync] = useState<ClaimSyncState>({ status: 'idle' });
 
   useEffect(() => {
+    let cancelled = false;
     setErr(null);
     Promise.all([listSlots(), listRegistrations(), loadConfig(), listIneligibility()])
       .then(([s, r, c, i]) => {
+        if (cancelled) return;
         setSlots(s); setRegs(r); setCfg(c); setInelig(i);
-        if (!didAutoSyncClaims.current && r.length > 0) {
-          didAutoSyncClaims.current = true;
-          backfillEmpCodeClaims(adminEmail).catch((e) => {
-            console.warn('Auto-sync empCodeClaims failed:', e);
-          });
+        if (r.length === 0) {
+          setClaimSync({ status: 'idle' });
+          return;
         }
+        setClaimSync({ status: 'running' });
+        return backfillEmpCodeClaims(adminEmail)
+          .then((result) => {
+            if (cancelled) return;
+            const needsAttention = result.skippedDuplicates.length > 0 || result.conflicts.length > 0;
+            setClaimSync({ status: needsAttention ? 'attention' : 'ok', result });
+          })
+          .catch((e: Error) => {
+            if (!cancelled) setClaimSync({ status: 'error', error: e.message || String(e) });
+          });
       })
-      .catch((e: Error) => setErr(e.message));
+      .catch((e: Error) => {
+        if (!cancelled) setErr(e.message);
+      });
+    return () => { cancelled = true; };
   }, [adminEmail, reloadKey]);
 
   const reload = () => setReloadKey((n) => n + 1);
@@ -66,7 +79,7 @@ export function AdminPanel({ adminEmail, onExit }: { adminEmail: string; onExit:
   } else {
     switch (tab) {
       case 'overview': content = <Overview slots={slots} regs={regs} allowEnrollment={cfg.allowEnrollment} />; break;
-      case 'registrations': content = <RegistrationsTab adminEmail={adminEmail} slots={slots} regs={regs} onReload={reload} />; break;
+      case 'registrations': content = <RegistrationsTab adminEmail={adminEmail} slots={slots} regs={regs} onReload={reload} claimSync={claimSync} />; break;
       case 'slots': content = <SlotsTab adminEmail={adminEmail} slots={slots} regs={regs} allowEnrollment={cfg.allowEnrollment} onReload={reload} />; break;
       case 'ineligibility': content = <IneligibilityTab adminEmail={adminEmail} inelig={inelig} onReload={reload} />; break;
       case 'config': content = <ConfigTab adminEmail={adminEmail} cfg={cfg} onReload={reload} />; break;

@@ -5,6 +5,7 @@ import { fetchAdminEmails, isAdmin } from './lib/admin';
 import { onAuth, signInWithGoogle, signOutUser } from './lib/firebase';
 import type { User } from 'firebase/auth';
 import { ConfirmProvider, useConfirm, useToast } from './confirm-toast-provider';
+import { captureError, friendlyFirestoreError } from './lib/monitoring';
 import { ErrorBoundary } from './components/error-boundary';
 import { computeDeadline, type FlowState, type Step1Data, type Selection } from './booking/booking-utils';
 import { Topbar } from './booking/booking-chrome';
@@ -81,7 +82,10 @@ function AppInner() {
           setScreen('step1');
         }
       })
-      .catch((e: Error) => setLoadErr(e.message || 'Không tải được dữ liệu.'));
+      .catch((e: Error) => {
+        captureError(e, { operation: 'initDb.onMount' });
+        setLoadErr(friendlyFirestoreError(e) || 'Không tải được dữ liệu.');
+      });
   }, [authUser?.email]);
 
   const pushToast = useToast();
@@ -264,8 +268,11 @@ function AppInner() {
 
     const handleConfirmSubmit = async () => {
       if (!selection.speakingId || !selection.skillsId) return;
-      // F13: editing with same slots → no-op, no quota consumed
-      if (isEditing && selection.speakingId === curSpId && selection.skillsId === curSkId) {
+      // F13: editing with same empCode + same slots → no-op, no quota consumed
+      if (isEditing
+        && step1.empCode === (data.myBooking?.empCode ?? '')
+        && selection.speakingId === curSpId
+        && selection.skillsId === curSkId) {
         setIsEditing(false);
         setScreen('display');
         return;
@@ -322,6 +329,7 @@ function AppInner() {
             selection={selection}
             isEditing={isEditing}
             maxChanges={data.maxChanges}
+            changeCount={data.myBooking?.changeCount ?? 0}
             onCancel={() => setScreen('step2')}
             onConfirm={handleConfirmSubmit}
           />
@@ -407,6 +415,7 @@ function AppInner() {
             booking={data.myBooking}
             slots={data.slots}
             deadlinePassed={data.deadlinePassed}
+            allowEnrollment={data.allowEnrollment}
             maxChanges={data.maxChanges}
             onEdit={() => {
               setIsEditing(true);

@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mock firebase ────────────────────────────────────────────────────────────
-vi.mock('../lib/firebase', () => ({ db: {} }));
+vi.mock('../lib/firebase', () => ({ db: {}, functions: {} }));
 
 const mockGetDoc = vi.fn();
 const mockGetDocs = vi.fn();
@@ -23,6 +23,7 @@ const mockAddDoc = vi.fn();
 const mockSetDoc = vi.fn();
 const mockUpdateDoc = vi.fn();
 const mockDeleteDoc = vi.fn();
+const mockHttpsCallable = vi.fn();
 
 vi.mock('firebase/firestore', () => ({
   addDoc: (...args: any[]) => mockAddDoc(...args),
@@ -41,6 +42,10 @@ vi.mock('firebase/firestore', () => ({
     now: () => ({ toDate: () => new Date() }),
     fromDate: (d: Date) => ({ toDate: () => d }),
   },
+}));
+
+vi.mock('firebase/functions', () => ({
+  httpsCallable: (...args: any[]) => mockHttpsCallable(...args),
 }));
 
 vi.mock('../lib/audit', () => ({
@@ -140,11 +145,10 @@ describe('checkIneligibility()', () => {
     expect(result).toBeNull();
   });
 
-  it('UC-DB07: returns null when Firestore read fails (non-blocking)', async () => {
+  it('UC-DB07: throws when Firestore read fails (callers handle non-blocking behavior)', async () => {
     mockGetDoc.mockRejectedValueOnce(new Error('Network error'));
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = await checkIneligibility('262010');
-    expect(result).toBeNull();
+    await expect(checkIneligibility('262010')).rejects.toThrow('Network error');
     consoleSpy.mockRestore();
   });
 });
@@ -234,9 +238,7 @@ describe('bookDb() — validation', () => {
   });
 
   it('UC-DB14: rejects when blocked by ineligibility', async () => {
-    // 1. preflight getConfig() -> getDoc(config/main)
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    // 2. checkIneligibility -> getDoc(ineligibility/262010) returns blocked
+    // checkIneligibility -> getDoc(ineligibility/262010) returns blocked
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { reason: 'Chưa đủ 12 tháng' }));
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
@@ -247,10 +249,92 @@ describe('bookDb() — validation', () => {
   });
 });
 
+describe('bookDb()/cancelDb() — callable functions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDoc.mockReset();
+    mockGetDocs.mockReset();
+    mockHttpsCallable.mockReset();
+  });
+
+  function setupAllowedPreflight() {
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // ineligibility
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {})); // config requireEligibility off
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // empCodeClaims
+  }
+
+  function setupInitAfterCall() {
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
+    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+  }
+
+  it('UC-DB15: bookDb calls bookRegistration and returns refreshed state', async () => {
+    setupAllowedPreflight();
+    const callable = vi.fn().mockResolvedValue({ data: { emailSent: true } });
+    mockHttpsCallable.mockReturnValue(callable);
+    setupInitAfterCall();
+
+    const result = await bookDb('user@test.com', {
+      empCode: ' 262010 ', fullName: ' Nguyen Van A ', bu: ' IT ',
+      speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.emailSent).toBe(true);
+    expect(mockHttpsCallable).toHaveBeenCalledWith({}, 'bookRegistration');
+    expect(callable).toHaveBeenCalledWith({
+      empCode: '262010',
+      fullName: 'Nguyen Van A',
+      bu: 'IT',
+      speakingSlotId: 'SP-2206-0900',
+      skillsSlotId: '3S-2206-1100',
+    });
+    expect(result.state?.email).toBe('user@test.com');
+  });
+
+  it('UC-DB16: bookDb surfaces callable business errors', async () => {
+    setupAllowedPreflight();
+    const callable = vi.fn().mockRejectedValue(Object.assign(new Error('Đăng ký hiện đang bị khoá.'), { code: 'functions/failed-precondition' }));
+    mockHttpsCallable.mockReturnValue(callable);
+    setupInitAfterCall();
+
+    const result = await bookDb('user@test.com', {
+      empCode: '262010', fullName: 'A', bu: 'IT',
+      speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('khoá');
+  });
+
+  it('UC-DB25: cancelDb calls cancelRegistration and returns refreshed state', async () => {
+    const callable = vi.fn().mockResolvedValue({ data: {} });
+    mockHttpsCallable.mockReturnValue(callable);
+    setupInitAfterCall();
+
+    const result = await cancelDb('user@test.com');
+
+    expect(result.ok).toBe(true);
+    expect(mockHttpsCallable).toHaveBeenCalledWith({}, 'cancelRegistration');
+    expect(callable).toHaveBeenCalledWith({});
+  });
+
+  it('UC-DB26: cancelDb surfaces callable errors', async () => {
+    const callable = vi.fn().mockRejectedValue(Object.assign(new Error('Bạn chưa có đăng ký nào để hủy.'), { code: 'functions/failed-precondition' }));
+    mockHttpsCallable.mockReturnValue(callable);
+
+    const result = await cancelDb('user@test.com');
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('chưa có đăng ký');
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // UC-DB15 -> UC-DB24: bookDb() — Transaction scenarios
 // ═══════════════════════════════════════════════════════════════════════════
-describe('bookDb() — transaction', () => {
+describe.skip('bookDb() — transaction (moved to Cloud Functions)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   // Helper: mock the preflight sequence (getConfig first, then checkIneligibility)
@@ -593,7 +677,7 @@ describe('bookDb() — transaction', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // UC-DB25 -> UC-DB28: cancelDb()
 // ═══════════════════════════════════════════════════════════════════════════
-describe('cancelDb()', () => {
+describe.skip('cancelDb() — client transaction (moved to Cloud Functions)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('UC-DB25: successful cancel deletes registration and restores slot remaining', async () => {
@@ -688,7 +772,7 @@ describe('cancelDb()', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // UC-DB29 -> UC-DB38: bookDb() — Concurrency scenarios
 // ═══════════════════════════════════════════════════════════════════════════
-describe('bookDb() — concurrency', () => {
+describe.skip('bookDb() — concurrency (covered by Cloud Function transaction)', () => {
   // These tests fire multiple bookDb() calls through Promise.all. bookDb's
   // preflight (getConfig + checkIneligibility) and post-transaction initDb both
   // read via the shared global getDoc mock. A sequential mockResolvedValueOnce

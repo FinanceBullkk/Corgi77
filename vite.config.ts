@@ -14,6 +14,7 @@ export default defineConfig({
           if (id.includes('node_modules')) {
             if (id.includes('firebase') || id.includes('@firebase')) return 'firebase';
             if (id.includes('/react') || id.includes('/scheduler')) return 'react-vendor';
+            if (id.includes('@sentry')) return 'vendor';
             return 'vendor';
           }
         },

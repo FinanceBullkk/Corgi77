@@ -12,6 +12,7 @@ export function BookingDisplay({
   booking,
   slots,
   deadlinePassed,
+  allowEnrollment,
   maxChanges,
   onEdit,
   onCancelled,
@@ -21,6 +22,7 @@ export function BookingDisplay({
   booking: MyBooking;
   slots: Slot[];
   deadlinePassed: boolean;
+  allowEnrollment: boolean;
   maxChanges: number;
   onEdit: () => void;
   onCancelled: (state: InitResult) => void;
@@ -159,7 +161,7 @@ export function BookingDisplay({
         </div>
       </div>
 
-      {!deadlinePassed && (
+      {!deadlinePassed && allowEnrollment && (
         <div className="bk-actions">
           <button
             className={`btn ${changesLeft <= 0 ? 'disabled' : ''}`}

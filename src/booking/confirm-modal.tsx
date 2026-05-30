@@ -12,6 +12,7 @@ export function ConfirmModal({
   selection,
   isEditing,
   maxChanges,
+  changeCount,
   onCancel,
   onConfirm,
 }: {
@@ -20,10 +21,12 @@ export function ConfirmModal({
   selection: Selection;
   isEditing: boolean;
   maxChanges: number;
+  changeCount: number;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 }) {
   const [submitting, setSubmitting] = useState(false);
+  const changesLeft = Math.max(0, maxChanges - changeCount);
   const sp = slots.find((s) => s.slotId === selection.speakingId);
   const sk = slots.find((s) => s.slotId === selection.skillsId);
 
@@ -96,7 +99,7 @@ export function ConfirmModal({
       <div className="banner warn">
         <span className="banner-icon">⚠</span>
         <div>
-          <b>Sau khi đăng ký</b> bạn còn <b>{maxChanges} lần đổi ca</b>. Hết quota sẽ phải liên hệ BTC.
+          <b>Sau khi {isEditing ? 'đổi' : 'đăng ký'}</b> bạn còn <b>{changesLeft} lần đổi ca</b>. Hết quota sẽ phải liên hệ BTC.
         </div>
       </div>
     </Modal>

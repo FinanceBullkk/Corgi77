@@ -1,15 +1,14 @@
 import {
-  addDoc,
   collection,
   doc,
   getDoc,
   getDocs,
-  runTransaction,
   Timestamp,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from './firebase';
 import type { BookPayload, BookResult, CancelResult, InitResult, Slot } from './types';
-import { auditLog } from './audit';
+import { captureError, friendlyFirestoreError } from './monitoring';
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -17,22 +16,6 @@ function minToHHmm(min: number) {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
-/** Escape HTML entities to prevent XSS when interpolating user input into HTML emails. */
-function escHtml(s: string): string {
-  // Split entity strings to prevent auto-formatter from converting them back to literal chars
-  const amp = '&' + 'amp;';
-  const lt = '&' + 'lt;';
-  const gt = '&' + 'gt;';
-  const quot = '&' + 'quot;';
-  const apos = '&' + '#39;';
-  return s
-    .replace(/&/g, amp)
-    .replace(/</g, lt)
-    .replace(/>/g, gt)
-    .replace(/"/g, quot)
-    .replace(/'/g, apos);
 }
 
 function slotFromDoc(id: string, data: Record<string, any>): Slot {
@@ -154,46 +137,11 @@ export async function checkIneligibility(empCode: string, email?: string): Promi
 
     return null;
   } catch (e) {
-    // If read fails (network, permission), don't block the user here —
-    // server-side rules will still enforce on actual write.
-    console.warn('checkIneligibility read failed (non-blocking):', e);
-    return null;
-  }
-}
-
-// Fire-and-forget confirmation email via /mail (Firebase Send-Email extension).
-// Non-blocking: failures are logged but never thrown.
-async function sendConfirmationEmail(
-  email: string,
-  fullName: string,
-  sp: Slot,
-  sk: Slot,
-  isUpdate: boolean
-): Promise<void> {
-  try {
-    const fmtSlot = (s: Slot) => {
-      const [y, mo, d] = s.date.split('-');
-      return `${d}/${mo}/${y} · ${minToHHmm(s.startMin)}–${minToHHmm(s.endMin)}${s.location ? ' · ' + escHtml(s.location) : ''}`;
-    };
-    const verb = isUpdate ? 'cập nhật' : 'đăng ký';
-    await addDoc(collection(db, 'mail'), {
-      to: email,
-      message: {
-        subject: `[Assessment Q2 2026] Xác nhận ${verb} ca thi`,
-        html: `
-          <p>Xin chào <b>${escHtml(fullName)}</b>,</p>
-          <p>Bạn đã ${verb} thành công 2 ca thi Assessment Q2 2026:</p>
-          <ul>
-            <li><b>Speaking:</b> ${fmtSlot(sp)}</li>
-            <li><b>3 Skills:</b> ${fmtSlot(sk)}</li>
-          </ul>
-          <p>Nếu cần đổi/huỷ, vui lòng truy cập lại hệ thống trước thời hạn.</p>
-          <p>— Ban tổ chức Assessment</p>
-        `,
-      },
-    });
-  } catch (e) {
-    console.warn('Confirmation email failed (non-blocking):', e);
+    // Re-throw so callers can distinguish "network error" from "verified OK".
+    // bookDb wraps this call in try-catch for non-blocking preflight; server rules
+    // enforce on actual write regardless.
+    captureError(e, { operation: 'checkIneligibility' });
+    throw e;
   }
 }
 
@@ -226,267 +174,55 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
   if (!/^\d{6}$/.test(trimmedEmpCode))
     return { ok: false, error: 'Mã NV phải là 6 chữ số (VD: 262010).' };
 
-  // Pre-flight blocklist check by empCode (UX only — server rules enforce too).
-  // We read config once outside the transaction so we can fail fast.
-  let preflightCfg: ConfigData;
+  let blockReason: string | null = null;
   try {
-    preflightCfg = await getConfig();
-  } catch (e) {
-    return { ok: false, error: 'Không tải được cấu hình hệ thống.' };
+    blockReason = await checkIneligibility(trimmedEmpCode, email);
+  } catch {
+    // Network/permission error at preflight — non-blocking; callable enforces on write.
   }
-  const blockReason = await checkIneligibility(trimmedEmpCode, email);
   if (blockReason) return { ok: false, error: blockReason };
 
-  // Tracking vars set inside transaction (transactions may retry — final values win).
-  let noChange = false; // F13: true when user submits same slots -> no quota/slot writes
-  let isUpdate = false;
-  let prevSpId: string | null = null;
-  let prevSkId: string | null = null;
-  let finalChangeCount = 0;
-  let bookedSp: Slot | null = null;
-  let bookedSk: Slot | null = null;
-
   try {
-    await runTransaction(db, async (tx) => {
-      // ── READS 1: config + existing reg + saved quota (parallel) ──
-      const regRef = doc(db, 'registrations', email);
-      const quotaRef = doc(db, 'cancelledQuota', email);
-      const claimRef = doc(db, 'empCodeClaims', trimmedEmpCode);
-      const [cfgSnap, regSnap, quotaSnap] = await Promise.all([
-        tx.get(doc(db, 'config', 'main')),
-        tx.get(regRef),
-        tx.get(quotaRef),
-      ]);
-
-      const cfg = cfgSnap.exists() ? cfgSnap.data() : {};
-      if (cfg.allowEnrollment === false)
-        throw new Error('Đăng ký hiện đang bị khoá. Vui lòng liên hệ Ban tổ chức.');
-      // Client-side deadline check is for UX (clearer error message).
-      // Server-side rules enforce the real deadline using request.time.
-      if (cfg.deadline && new Date() > (cfg.deadline as Timestamp).toDate())
-        throw new Error('Đã hết hạn đăng ký.');
-
-      const oldReg = regSnap.exists() ? regSnap.data() : null;
-      const oldSpId: string | null = oldReg?.speakingSlotId ?? null;
-      const oldSkId: string | null = oldReg?.skillsSlotId ?? null;
-      const oldEmpCode: string | null = typeof oldReg?.empCode === 'string' ? oldReg.empCode : null;
-
-      // F13: user confirmed without changing slots -> no quota consumed.
-      // Still repair a missing claim so legacy registrations become protected.
-      if (oldReg && oldEmpCode === trimmedEmpCode && speakingSlotId === oldSpId && skillsSlotId === oldSkId) {
-        const claimSnap = await tx.get(claimRef);
-        if (claimSnap?.exists() && claimSnap.data().email !== email)
-          throw new Error('Mã NV này đã đăng ký bằng email khác.');
-        if (!claimSnap?.exists()) tx.set(claimRef, { email });
-        noChange = true;
-        return;
-      }
-
-      // ── READS 2: slots ──
-      const spRef = doc(db, 'slots', speakingSlotId);
-      const skRef = doc(db, 'slots', skillsSlotId);
-      const [spSnap, skSnap] = await Promise.all([tx.get(spRef), tx.get(skRef)]);
-
-      if (!spSnap.exists() || spSnap.data().type !== 'Speaking')
-        throw new Error('Ca Speaking không hợp lệ.');
-      if (!skSnap.exists() || skSnap.data().type !== '3 Skills')
-        throw new Error('Ca 3 Skills không hợp lệ.');
-
-      const sp = slotFromDoc(spSnap.id, spSnap.data());
-      const sk = slotFromDoc(skSnap.id, skSnap.data());
-
-      // Overlap guard — CLIENT-SIDE ONLY. firestore.rules does not cross-check the
-      // two slots' times, so this is a UX/honest-client guard, not a server invariant
-      // (same raw-write risk class as capacity via onlyRemainingChanged). Acceptable:
-      // an overlap only self-harms the user's own schedule; it cannot oversell a slot.
-      if (sp.date === sk.date && sp.startMin < sk.endMin && sp.endMin > sk.startMin)
-        throw new Error('Hai ca thi bị trùng giờ. Vui lòng chọn 2 ca không trùng.');
-
-      // F14: quota preserved across cancel+re-register (cancelDb saves quota on cancel)
-      const savedQuota = quotaSnap.exists() ? Math.max(0, (quotaSnap.data().changeCount as number) ?? 0) : null;
-      // Base count: from active reg, or from saved quota after cancel, or 0 for first booking
-      const baseCount = oldReg ? Math.max(0, oldReg.changeCount ?? 0) : (savedQuota ?? 0);
-      // Increment only when changing an existing booking's slots; re-register after cancel doesn't cost a change
-      const changeCount = oldReg ? baseCount + 1 : baseCount;
-      const maxChanges = typeof cfg.maxChanges === 'number' ? cfg.maxChanges : 3;
-      if (oldReg && changeCount > maxChanges)
-        throw new Error(`Bạn đã đổi ca ${baseCount} lần (tối đa ${maxChanges} lần). Liên hệ Ban tổ chức.`);
-
-      // Capacity check
-      const spAvail = sp.remaining + (oldSpId === sp.slotId ? 1 : 0);
-      const skAvail = sk.remaining + (oldSkId === sk.slotId ? 1 : 0);
-      if (spAvail <= 0) throw new Error(`Ca Speaking "${sp.display}" đã hết chỗ.`);
-      if (skAvail <= 0) throw new Error(`Ca 3 Skills "${sk.display}" đã hết chỗ.`);
-
-      // ── ALL READS for old slots (must happen BEFORE any writes) ──
-      let oldSpRemaining: number | null = null;
-      let oldSkRemaining: number | null = null;
-      if (oldSpId && oldSpId !== sp.slotId) {
-        const oldSpSnap = await tx.get(doc(db, 'slots', oldSpId));
-        if (oldSpSnap.exists()) oldSpRemaining = oldSpSnap.data().remaining ?? 0;
-      }
-      if (oldSkId && oldSkId !== sk.slotId) {
-        const oldSkSnap = await tx.get(doc(db, 'slots', oldSkId));
-        if (oldSkSnap.exists()) oldSkRemaining = oldSkSnap.data().remaining ?? 0;
-      }
-
-      const oldClaimRef = oldEmpCode && oldEmpCode !== trimmedEmpCode
-        ? doc(db, 'empCodeClaims', oldEmpCode)
-        : null;
-      const [claimSnap, oldClaimSnap] = await Promise.all([
-        tx.get(claimRef),
-        oldClaimRef ? tx.get(oldClaimRef) : Promise.resolve(null),
-      ]);
-      if (claimSnap?.exists() && claimSnap.data().email !== email)
-        throw new Error('Mã NV này đã đăng ký bằng email khác.');
-
-      // ── ALL WRITES below ──
-      if (oldSpRemaining !== null && oldSpId)
-        tx.update(doc(db, 'slots', oldSpId), { remaining: oldSpRemaining + 1 });
-      if (oldSkRemaining !== null && oldSkId)
-        tx.update(doc(db, 'slots', oldSkId), { remaining: oldSkRemaining + 1 });
-
-      // Decrement new slot remaining
-      if (oldSpId !== sp.slotId) tx.update(spRef, { remaining: spAvail - 1 });
-      if (oldSkId !== sk.slotId) tx.update(skRef, { remaining: skAvail - 1 });
-
-      // Consume saved quota doc if it was used for this booking (F14)
-      if (quotaSnap.exists()) tx.delete(quotaRef);
-
-      if (!claimSnap?.exists()) tx.set(claimRef, { email });
-      if (oldClaimRef && oldClaimSnap?.exists() && oldClaimSnap.data().email === email)
-        tx.delete(oldClaimRef);
-
-      // Write registration
-      const now = Timestamp.now();
-      tx.set(regRef, {
-        email,
-        empCode: trimmedEmpCode,
-        fullName: fullName.trim(),
-        bu: bu.trim(),
-        speakingSlotId,
-        skillsSlotId,
-        createdAt: oldReg?.createdAt ?? now,
-        updatedAt: now,
-        changeCount,
-      });
-
-      // Capture state for post-transaction work
-      isUpdate = !!oldReg;
-      prevSpId = oldSpId;
-      prevSkId = oldSkId;
-      finalChangeCount = changeCount;
-      bookedSp = sp;
-      bookedSk = sk;
-    });
-
-    // F13: same slots confirmed → no writes happened, just return current state
-    if (noChange) {
-      try { return { ok: true, state: await initDb(email) }; }
-      catch { return { ok: true }; }
-    }
-
-    // ── Post-transaction side effects (non-blocking) ────────────────────
-    void auditLog(email, isUpdate ? 'book.update' : 'book.create', {
+    const callBook = httpsCallable<Omit<BookPayload, 'email'>, { emailSent?: boolean }>(functions, 'bookRegistration');
+    const res = await callBook({
       empCode: trimmedEmpCode,
       fullName: fullName.trim(),
       bu: bu.trim(),
       speakingSlotId,
       skillsSlotId,
-      prevSpeakingSlotId: prevSpId,
-      prevSkillsSlotId: prevSkId,
-      changeCount: finalChangeCount,
     });
-
-    let emailSent = false;
-    if (preflightCfg.emailConfirm && bookedSp && bookedSk) {
-      void sendConfirmationEmail(email, fullName.trim(), bookedSp, bookedSk, isUpdate);
-      emailSent = true; // queued; actual delivery handled by Send-Email extension
-    }
-
-    // Wrap post-transaction initDb so its failure doesn't mask a successful booking
     let state: InitResult | undefined;
     try {
       state = await initDb(email);
     } catch (initErr) {
-      console.warn('initDb failed after successful booking (non-blocking):', initErr);
+      captureError(initErr, { operation: 'bookDb.initDb.postCallable' });
     }
-    return { ok: true, emailSent, state };
+    return { ok: true, emailSent: res.data.emailSent === true, state };
   } catch (e) {
-    // Transaction itself failed — try to fetch state for UI display
+    captureError(e, { operation: 'bookDb.callable' });
     let state: InitResult | undefined;
     try {
       state = await initDb(email);
     } catch (initErr) {
-      console.warn('initDb failed in catch block:', initErr);
+      captureError(initErr, { operation: 'bookDb.initDb.catch' });
     }
-    return { ok: false, error: (e as Error).message, state };
+    return { ok: false, error: friendlyFirestoreError(e), state };
   }
 }
 
 export async function cancelDb(email: string): Promise<CancelResult> {
   try {
-    let cancelled = false;
-    await runTransaction(db, async (tx) => {
-      const cfgSnap = await tx.get(doc(db, 'config', 'main'));
-      const cfg = cfgSnap.exists() ? cfgSnap.data() : {};
-      // Enrollment lock blocks cancel too (rules' isEnrollmentOpen gates delete).
-      // Check client-side so the user gets a clear message, not a raw permission error.
-      if (cfg.allowEnrollment === false)
-        throw new Error('Đăng ký hiện đang bị khoá. Vui lòng liên hệ Ban tổ chức.');
-      // Client-side deadline check is UX only — rules enforce real deadline.
-      if (cfg.deadline && new Date() > (cfg.deadline as Timestamp).toDate())
-        throw new Error('Đã hết hạn đăng ký. Không thể hủy.');
-
-      const regRef = doc(db, 'registrations', email);
-      const regSnap = await tx.get(regRef);
-      if (!regSnap.exists()) throw new Error('Bạn chưa có đăng ký nào để hủy.');
-
-      const reg = regSnap.data();
-      const claimRef = typeof reg.empCode === 'string' ? doc(db, 'empCodeClaims', reg.empCode) : null;
-
-      // ── ALL READS first ──
-      let spRemaining: number | null = null;
-      let skRemaining: number | null = null;
-      if (reg.speakingSlotId) {
-        const spSnap = await tx.get(doc(db, 'slots', reg.speakingSlotId));
-        if (spSnap.exists()) spRemaining = spSnap.data().remaining ?? 0;
-      }
-      if (reg.skillsSlotId) {
-        const skSnap = await tx.get(doc(db, 'slots', reg.skillsSlotId));
-        if (skSnap.exists()) skRemaining = skSnap.data().remaining ?? 0;
-      }
-      const claimSnap = claimRef ? await tx.get(claimRef) : null;
-
-      // ── ALL WRITES below ──
-      if (spRemaining !== null)
-        tx.update(doc(db, 'slots', reg.speakingSlotId), { remaining: spRemaining + 1 });
-      if (skRemaining !== null)
-        tx.update(doc(db, 'slots', reg.skillsSlotId), { remaining: skRemaining + 1 });
-
-      tx.delete(regRef);
-      if (claimRef && claimSnap?.exists() && claimSnap.data().email === email)
-        tx.delete(claimRef);
-      // F14: preserve quota so cancel+re-register can't reset change limit
-      tx.set(doc(db, 'cancelledQuota', email), {
-        changeCount: reg.changeCount ?? 0,
-        cancelledAt: Timestamp.now(),
-      });
-      cancelled = true;
-    });
-
-    if (cancelled) {
-      void auditLog(email, 'book.cancel', {});
-    }
-
+    const callCancel = httpsCallable<Record<string, never>, Record<string, never>>(functions, 'cancelRegistration');
+    await callCancel({});
     let state: InitResult | undefined;
     try {
       state = await initDb(email);
     } catch (initErr) {
-      console.warn('initDb failed after successful cancel (non-blocking):', initErr);
+      captureError(initErr, { operation: 'cancelDb.initDb.postCallable' });
     }
     return { ok: true, state };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    captureError(e, { operation: 'cancelDb.callable' });
+    return { ok: false, error: friendlyFirestoreError(e) };
   }
 }

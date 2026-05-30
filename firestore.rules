@@ -74,23 +74,6 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/registrations/$(request.resource.data.email)).data.empCode == empCode;
     }
 
-    // Slot update by non-admin: only `remaining` field can change,
-    // and it must stay within [0, capacity].
-    function onlyRemainingChanged() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['remaining'])
-        && request.resource.data.remaining is int
-        && request.resource.data.remaining >= 0
-        && request.resource.data.remaining <= resource.data.capacity
-        // Defense-in-depth: a legit booking/cancel changes `remaining` by exactly ±1
-        // (verified in db.ts: decrement on book, increment on release/cancel). This
-        // blocks a malicious client from jumping `remaining` up to capacity in a
-        // single write to manufacture free seats. Residual risk: looped ±1 writes
-        // (slower, detectable, still bounded by [0, capacity]) — a full fix needs a
-        // server-authoritative counter (Cloud Function), which breaks client-only.
-        && (request.resource.data.remaining == resource.data.remaining + 1
-            || request.resource.data.remaining == resource.data.remaining - 1);
-    }
-
     // Validation for new slot (admin create).
     function validNewSlot() {
       return request.resource.data.type in ['Speaking', '3 Skills']
@@ -129,13 +112,13 @@ service cloud.firestore {
     // ─── Slots ──────────────────────────────────────────────────────────
     // Read: any signed-in user
     // Create: admin only, with field validation
-    // Update: admin (validated fields) OR signed-in user (ONLY `remaining` for booking tx)
+    // Update: admin only. Booking/cancel slot counters are server-authoritative
+    // through Cloud Functions (Admin SDK bypasses rules).
     // Delete: admin only
     match /slots/{slotId} {
       allow read: if request.auth != null;
       allow create: if isAdmin() && validNewSlot();
-      allow update: if (isAdmin() && validAdminSlotUpdate())
-                    || (request.auth != null && onlyRemainingChanged());
+      allow update: if isAdmin() && validAdminSlotUpdate();
       allow delete: if isAdmin();
     }
 
@@ -148,51 +131,26 @@ service cloud.firestore {
     }
 
     // ─── Registrations ──────────────────────────────────────────────────
-    // Read/Write own: signed-in user, with server-side deadline + blocklist check
+    // Read own. User writes go through Cloud Functions so raw SDK cannot bypass
+    // empCode uniqueness, capacity, overlap, deadline, or quota checks.
     // Admin: full access (bypass deadline so admin can fix things after deadline)
     match /registrations/{email} {
       allow read: if isAdmin()
         || (request.auth != null && request.auth.token.email == email);
 
-      allow create: if isAdmin()
-        || (request.auth != null
-            && request.auth.token.email == email
-            && isEnrollmentOpen()
-            && isNotBlocked()
-            && hasOwnEmpCodeClaim());
-
-      allow update: if isAdmin()
-        || (request.auth != null
-            && request.auth.token.email == email
-            && isEnrollmentOpen()
-            && isNotBlocked()
-            && hasOwnEmpCodeClaim());
-
-      allow delete: if isAdmin()
-        || (request.auth != null
-            && request.auth.token.email == email
-            && isEnrollmentOpen());
+      allow create, update, delete: if isAdmin();
     }
 
     // ─── EmpCode Claims (one empCode = one active registration) ─────────
     // Key = empCode. Doc shape: { email }
     // Read: single-doc reads allowed for signed-in users so bookDb can detect
     // an existing claim in its transaction; list remains admin-only.
-    // Write/delete: owner-scoped, so users cannot steal or release another
-    // email's empCode claim. Admin bypasses this for production data fixes.
+    // Write/delete: Cloud Functions own this lock. Admin bypass remains for
+    // production data fixes.
     match /empCodeClaims/{empCode} {
       allow get: if request.auth != null;
       allow list: if isAdmin();
-      allow create: if isAdmin()
-        || (request.auth != null
-            && (validOwnEmpCodeClaim(empCode) || validClaimForExistingRegistration(empCode)));
-      allow update: if isAdmin()
-        || (request.auth != null
-            && resource.data.email == request.auth.token.email
-            && validOwnEmpCodeClaim(empCode));
-      allow delete: if isAdmin()
-        || (request.auth != null
-            && resource.data.email == request.auth.token.email);
+      allow create, update, delete: if isAdmin();
     }
 
     // ─── Eligibility (allowlist by empCode) ──────────────────────────────
@@ -234,18 +192,18 @@ service cloud.firestore {
     }
 
     // ─── Cancelled Quota (quota preserved across cancel+re-register) ─────
-    // Written by cancelDb, read+deleted by bookDb. Owner-scoped only.
+    // Written by Cloud Functions only; admin can inspect/fix if needed.
     match /cancelledQuota/{email} {
-      allow read, write: if request.auth != null && request.auth.token.email == email;
+      allow read, write: if isAdmin();
     }
 
     // ─── Mail (Firebase Send-Email extension queue) ─────────────────────
     // Read: admin only
-    // Create: any signed-in user (confirmation emails written from booking)
+    // Create: Cloud Functions only (Admin SDK bypasses rules)
     // Update/Delete: extension manages
     match /mail/{id} {
       allow read: if isAdmin();
-      allow create: if request.auth != null;
+      allow create: if false;
       allow update, delete: if false;
     }
   }

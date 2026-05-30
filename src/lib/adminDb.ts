@@ -12,7 +12,8 @@ import {
   where,
   deleteField,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from './firebase';
 import type { MyBooking, Slot } from './types';
 import { auditLog } from './audit';
 
@@ -235,47 +236,10 @@ export async function adminDeleteRegistration(adminEmail: string, targetEmail: s
 
 /** Backfill /empCodeClaims from existing registrations (admin maintenance). */
 export async function backfillEmpCodeClaims(adminEmail: string): Promise<BackfillEmpCodeClaimsResult> {
-  const regs = await listRegistrations();
-  const byCode = new Map<string, Registration[]>();
-  for (const reg of regs) {
-    if (!/^\d{6}$/.test(reg.empCode)) continue;
-    byCode.set(reg.empCode, [...(byCode.get(reg.empCode) ?? []), reg]);
-  }
-
-  const result: BackfillEmpCodeClaimsResult = {
-    created: 0,
-    kept: 0,
-    skippedDuplicates: [],
-    conflicts: [],
-  };
-
-  for (const [empCode, codeRegs] of byCode) {
-    if (codeRegs.length > 1) {
-      result.skippedDuplicates.push({ empCode, emails: codeRegs.map((r) => r.email) });
-      continue;
-    }
-
-    const registrationEmail = codeRegs[0].email;
-    const claimRef = doc(db, 'empCodeClaims', empCode);
-    const claimSnap = await getDoc(claimRef);
-    if (claimSnap.exists()) {
-      const claimEmail = claimSnap.data().email;
-      if (claimEmail === registrationEmail) result.kept += 1;
-      else result.conflicts.push({ empCode, claimEmail, registrationEmail });
-      continue;
-    }
-
-    await setDoc(claimRef, { email: registrationEmail });
-    result.created += 1;
-  }
-
-  void auditLog(adminEmail, 'admin.backfillEmpCodeClaims', {
-    created: result.created,
-    kept: result.kept,
-    skippedDuplicates: result.skippedDuplicates,
-    conflicts: result.conflicts,
-  });
-  return result;
+  void adminEmail;
+  const repair = httpsCallable<Record<string, never>, BackfillEmpCodeClaimsResult>(functions, 'repairEmpCodeClaimsNow');
+  const res = await repair({});
+  return res.data;
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
