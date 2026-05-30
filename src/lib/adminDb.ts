@@ -190,6 +190,7 @@ export async function adminDeleteRegistration(adminEmail: string, targetEmail: s
     const regSnap = await tx.get(regRef);
     if (!regSnap.exists()) throw new Error('Không tìm thấy đăng ký.');
     const reg = regSnap.data();
+    const claimRef = typeof reg.empCode === 'string' ? doc(db, 'empCodeClaims', reg.empCode) : null;
 
     // ── ALL READS first ──
     let spRemaining: number | null = null;
@@ -202,6 +203,7 @@ export async function adminDeleteRegistration(adminEmail: string, targetEmail: s
       const s = await tx.get(doc(db, 'slots', reg.skillsSlotId));
       if (s.exists()) skRemaining = s.data().remaining ?? 0;
     }
+    const claimSnap = claimRef ? await tx.get(claimRef) : null;
 
     // ── ALL WRITES below ──
     if (spRemaining !== null)
@@ -209,6 +211,8 @@ export async function adminDeleteRegistration(adminEmail: string, targetEmail: s
     if (skRemaining !== null)
       tx.update(doc(db, 'slots', reg.skillsSlotId), { remaining: skRemaining + 1 });
     tx.delete(regRef);
+    if (claimRef && claimSnap?.exists() && claimSnap.data().email === targetEmail)
+      tx.delete(claimRef);
 
     deletedDetail = {
       targetEmail,

@@ -257,13 +257,17 @@ describe('adminDeleteRegistration()', () => {
     txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 }));
     // 3. tx.get(slots/skillsSlotId) -> exists
     txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 8 }));
+    // 4. tx.get(empCodeClaims/empCode) -> owned by target registration
+    txGet.mockResolvedValueOnce(mockDocSnap(true, { email: 'user@test.com' }));
 
     mockRunTransaction.mockImplementation(async (fn: any) => {
       await fn({ get: txGet, set: vi.fn(), update: txUpdate, delete: txDelete });
     });
 
     await adminDeleteRegistration('admin@test.com', 'user@test.com');
-    expect(txDelete).toHaveBeenCalledOnce();
+    expect(txDelete).toHaveBeenCalledTimes(2);
+    expect(txDelete.mock.calls.some(([ref]) => ref.path === 'registrations/user@test.com')).toBe(true);
+    expect(txDelete.mock.calls.some(([ref]) => ref.path === 'empCodeClaims/262010')).toBe(true);
     expect(txUpdate).toHaveBeenCalledTimes(2); // Both slots restored
   });
 

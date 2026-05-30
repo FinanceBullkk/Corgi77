@@ -251,6 +251,7 @@ describe('bookDb() — transaction', () => {
     setupPreflight();
 
     const txGet = vi.fn();
+    const setCalls: any[] = [];
     // Transaction reads (batch 1 — parallel):
     // 1. tx.get(config/main)
     txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
@@ -263,9 +264,16 @@ describe('bookDb() — transaction', () => {
     txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
     // 5. tx.get(slots/sk) -> Skills slot
     txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 3 }));
+    // 6. tx.get(empCodeClaims/empCode) -> no existing claim
+    txGet.mockResolvedValueOnce(mockDocSnap(false));
 
     mockRunTransaction.mockImplementation(async (fn: any) => {
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+      await fn({
+        get: txGet,
+        set: (...args: any[]) => setCalls.push(args),
+        update: vi.fn(),
+        delete: vi.fn(),
+      });
     });
 
     // After transaction: initDb call
@@ -278,6 +286,41 @@ describe('bookDb() — transaction', () => {
       speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
     });
     expect(result.ok).toBe(true);
+    expect(setCalls.some(([ref, data]) => ref.path === 'empCodeClaims/262010' && data.email === 'user@test.com')).toBe(true);
+  });
+
+  it('UC-DB15B: rejects when empCode is already claimed by another email', async () => {
+    setupPreflight();
+
+    const txGet = vi.fn();
+    const setCalls: any[] = [];
+    txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
+    txGet.mockResolvedValueOnce(mockDocSnap(false));
+    txGet.mockResolvedValueOnce(mockDocSnap(false));
+    txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
+    txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 3 }));
+    txGet.mockResolvedValueOnce(mockDocSnap(true, { email: 'other@test.com' }));
+
+    mockRunTransaction.mockImplementation(async (fn: any) => {
+      await fn({
+        get: txGet,
+        set: (...args: any[]) => setCalls.push(args),
+        update: vi.fn(),
+        delete: vi.fn(),
+      });
+    });
+
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
+    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+
+    const result = await bookDb('user@test.com', {
+      empCode: '262010', fullName: 'Nguyen Van A', bu: 'IT',
+      speakingSlotId: 'SP-2206-0900', skillsSlotId: '3S-2206-1100',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Mã NV này đã đăng ký bằng email khác');
+    expect(setCalls).toHaveLength(0);
   });
 
   it('UC-DB16: rejects when allowEnrollment=false', async () => {
@@ -475,13 +518,19 @@ describe('bookDb() — transaction', () => {
     const txGet = vi.fn();
     txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     // existing reg with changeCount=1
-    txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_REGISTRATION, changeCount: 1 }));
+    txGet.mockResolvedValueOnce(mockDocSnap(true, {
+      ...TEST_REGISTRATION,
+      speakingSlotId: 'SP-OLD',
+      skillsSlotId: '3S-OLD',
+      changeCount: 1,
+    }));
     txGet.mockResolvedValueOnce(mockDocSnap(false));
     txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
     txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 3 }));
     // old slot reads (different from new ones)
     txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 10 }));
     txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 8 }));
+    txGet.mockResolvedValueOnce(mockDocSnap(true, { email: 'user@test.com' }));
 
     const setCalls: any[] = [];
     const updateCalls: any[] = [];
@@ -539,6 +588,7 @@ describe('cancelDb()', () => {
       txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_REGISTRATION));
       txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 10 }));
       txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 8 }));
+      txGet.mockResolvedValueOnce(mockDocSnap(true, { email: 'user@test.com' }));
       await fn({
         get: txGet,
         set: mockSetDoc,
@@ -554,7 +604,8 @@ describe('cancelDb()', () => {
     const result = await cancelDb('user@test.com');
     expect(result.ok).toBe(true);
     expect(updateCalls.length).toBeGreaterThanOrEqual(2);
-    expect(deleteCalls.length).toBeGreaterThanOrEqual(1);
+    expect(deleteCalls.some(([ref]) => ref.path === 'registrations/user@test.com')).toBe(true);
+    expect(deleteCalls.some(([ref]) => ref.path === 'empCodeClaims/262010')).toBe(true);
   });
 
   it('UC-DB26: rejects when no registration exists', async () => {
@@ -787,12 +838,12 @@ describe('bookDb() — concurrency', () => {
           ...TEST_REGISTRATION, changeCount: 0,
         }));
         txGet.mockResolvedValueOnce(mockDocSnap(false));
+        txGet.mockResolvedValueOnce(mockDocSnap(true, { email: 'user@test.com' }));
       }
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 3 }));
-      // For second click: old slot reads (same as new → noChange path)
-      if (txCall === 1) {
-        // no slots to restore since same slots
+      if (txCall === 0) {
+        txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
+        txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 3 }));
+        txGet.mockResolvedValueOnce(mockDocSnap(false));
       }
       txCall++;
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
@@ -839,13 +890,19 @@ describe('bookDb() — concurrency', () => {
       const txGet = vi.fn();
       txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
       // Registration still exists when change is processed
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_REGISTRATION, changeCount: 0 }));
+      txGet.mockResolvedValueOnce(mockDocSnap(true, {
+        ...TEST_REGISTRATION,
+        speakingSlotId: 'SP-OLD',
+        skillsSlotId: '3S-OLD',
+        changeCount: 0,
+      }));
       txGet.mockResolvedValueOnce(mockDocSnap(false));
       txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SPEAKING, remaining: 5 }));
       txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_SLOT_SKILLS, remaining: 3 }));
       // old slot reads
       txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 10 }));
       txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 8 }));
+      txGet.mockResolvedValueOnce(mockDocSnap(true, { email: 'user@test.com' }));
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
     });
 

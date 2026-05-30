@@ -206,10 +206,11 @@ export async function initDb(email: string): Promise<InitResult> {
 
 export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>): Promise<BookResult> {
   const { empCode, fullName, bu, speakingSlotId, skillsSlotId } = payload;
+  const trimmedEmpCode = empCode.trim();
 
-  if (!empCode.trim() || !fullName.trim() || !bu.trim())
+  if (!trimmedEmpCode || !fullName.trim() || !bu.trim())
     return { ok: false, error: 'Vui lòng điền đầy đủ Mã NV, Họ và tên, BU.' };
-  if (!/^\d{6}$/.test(empCode.trim()))
+  if (!/^\d{6}$/.test(trimmedEmpCode))
     return { ok: false, error: 'Mã NV phải là 6 chữ số (VD: 262010).' };
 
   // Pre-flight blocklist check by empCode (UX only — server rules enforce too).
@@ -220,11 +221,11 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
   } catch (e) {
     return { ok: false, error: 'Không tải được cấu hình hệ thống.' };
   }
-  const blockReason = await checkIneligibility(empCode);
+  const blockReason = await checkIneligibility(trimmedEmpCode);
   if (blockReason) return { ok: false, error: blockReason };
 
   // Tracking vars set inside transaction (transactions may retry — final values win).
-  let noChange = false; // F13: true when user submits same slots → skip all writes
+  let noChange = false; // F13: true when user submits same slots -> no quota/slot writes
   let isUpdate = false;
   let prevSpId: string | null = null;
   let prevSkId: string | null = null;
@@ -237,6 +238,7 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       // ── READS 1: config + existing reg + saved quota (parallel) ──
       const regRef = doc(db, 'registrations', email);
       const quotaRef = doc(db, 'cancelledQuota', email);
+      const claimRef = doc(db, 'empCodeClaims', trimmedEmpCode);
       const [cfgSnap, regSnap, quotaSnap] = await Promise.all([
         tx.get(doc(db, 'config', 'main')),
         tx.get(regRef),
@@ -254,9 +256,15 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       const oldReg = regSnap.exists() ? regSnap.data() : null;
       const oldSpId: string | null = oldReg?.speakingSlotId ?? null;
       const oldSkId: string | null = oldReg?.skillsSlotId ?? null;
+      const oldEmpCode: string | null = typeof oldReg?.empCode === 'string' ? oldReg.empCode : null;
 
-      // F13: user confirmed without changing slots → no-op, no quota consumed
-      if (oldReg && speakingSlotId === oldSpId && skillsSlotId === oldSkId) {
+      // F13: user confirmed without changing slots -> no quota consumed.
+      // Still repair a missing claim so legacy registrations become protected.
+      if (oldReg && oldEmpCode === trimmedEmpCode && speakingSlotId === oldSpId && skillsSlotId === oldSkId) {
+        const claimSnap = await tx.get(claimRef);
+        if (claimSnap?.exists() && claimSnap.data().email !== email)
+          throw new Error('Mã NV này đã đăng ký bằng email khác.');
+        if (!claimSnap?.exists()) tx.set(claimRef, { email });
         noChange = true;
         return;
       }
@@ -309,6 +317,16 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
         if (oldSkSnap.exists()) oldSkRemaining = oldSkSnap.data().remaining ?? 0;
       }
 
+      const oldClaimRef = oldEmpCode && oldEmpCode !== trimmedEmpCode
+        ? doc(db, 'empCodeClaims', oldEmpCode)
+        : null;
+      const [claimSnap, oldClaimSnap] = await Promise.all([
+        tx.get(claimRef),
+        oldClaimRef ? tx.get(oldClaimRef) : Promise.resolve(null),
+      ]);
+      if (claimSnap?.exists() && claimSnap.data().email !== email)
+        throw new Error('Mã NV này đã đăng ký bằng email khác.');
+
       // ── ALL WRITES below ──
       if (oldSpRemaining !== null && oldSpId)
         tx.update(doc(db, 'slots', oldSpId), { remaining: oldSpRemaining + 1 });
@@ -322,11 +340,15 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       // Consume saved quota doc if it was used for this booking (F14)
       if (quotaSnap.exists()) tx.delete(quotaRef);
 
+      if (!claimSnap?.exists()) tx.set(claimRef, { email });
+      if (oldClaimRef && oldClaimSnap?.exists() && oldClaimSnap.data().email === email)
+        tx.delete(oldClaimRef);
+
       // Write registration
       const now = Timestamp.now();
       tx.set(regRef, {
         email,
-        empCode: empCode.trim(),
+        empCode: trimmedEmpCode,
         fullName: fullName.trim(),
         bu: bu.trim(),
         speakingSlotId,
@@ -353,7 +375,7 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
 
     // ── Post-transaction side effects (non-blocking) ────────────────────
     void auditLog(email, isUpdate ? 'book.update' : 'book.create', {
-      empCode: empCode.trim(),
+      empCode: trimmedEmpCode,
       fullName: fullName.trim(),
       bu: bu.trim(),
       speakingSlotId,
@@ -408,6 +430,7 @@ export async function cancelDb(email: string): Promise<CancelResult> {
       if (!regSnap.exists()) throw new Error('Bạn chưa có đăng ký nào để hủy.');
 
       const reg = regSnap.data();
+      const claimRef = typeof reg.empCode === 'string' ? doc(db, 'empCodeClaims', reg.empCode) : null;
 
       // ── ALL READS first ──
       let spRemaining: number | null = null;
@@ -420,6 +443,7 @@ export async function cancelDb(email: string): Promise<CancelResult> {
         const skSnap = await tx.get(doc(db, 'slots', reg.skillsSlotId));
         if (skSnap.exists()) skRemaining = skSnap.data().remaining ?? 0;
       }
+      const claimSnap = claimRef ? await tx.get(claimRef) : null;
 
       // ── ALL WRITES below ──
       if (spRemaining !== null)
@@ -428,6 +452,8 @@ export async function cancelDb(email: string): Promise<CancelResult> {
         tx.update(doc(db, 'slots', reg.skillsSlotId), { remaining: skRemaining + 1 });
 
       tx.delete(regRef);
+      if (claimRef && claimSnap?.exists() && claimSnap.data().email === email)
+        tx.delete(claimRef);
       // F14: preserve quota so cancel+re-register can't reset change limit
       tx.set(doc(db, 'cancelledQuota', email), {
         changeCount: reg.changeCount ?? 0,
