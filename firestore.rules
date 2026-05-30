@@ -57,7 +57,15 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['remaining'])
         && request.resource.data.remaining is int
         && request.resource.data.remaining >= 0
-        && request.resource.data.remaining <= resource.data.capacity;
+        && request.resource.data.remaining <= resource.data.capacity
+        // Defense-in-depth: a legit booking/cancel changes `remaining` by exactly ±1
+        // (verified in db.ts: decrement on book, increment on release/cancel). This
+        // blocks a malicious client from jumping `remaining` up to capacity in a
+        // single write to manufacture free seats. Residual risk: looped ±1 writes
+        // (slower, detectable, still bounded by [0, capacity]) — a full fix needs a
+        // server-authoritative counter (Cloud Function), which breaks client-only.
+        && (request.resource.data.remaining == resource.data.remaining + 1
+            || request.resource.data.remaining == resource.data.remaining - 1);
     }
 
     // Validation for new slot (admin create).

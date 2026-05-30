@@ -274,7 +274,10 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       const sp = slotFromDoc(spSnap.id, spSnap.data());
       const sk = slotFromDoc(skSnap.id, skSnap.data());
 
-      // Overlap
+      // Overlap guard — CLIENT-SIDE ONLY. firestore.rules does not cross-check the
+      // two slots' times, so this is a UX/honest-client guard, not a server invariant
+      // (same raw-write risk class as capacity via onlyRemainingChanged). Acceptable:
+      // an overlap only self-harms the user's own schedule; it cannot oversell a slot.
       if (sp.date === sk.date && sp.startMin < sk.endMin && sp.endMin > sk.startMin)
         throw new Error('Hai ca thi bị trùng giờ. Vui lòng chọn 2 ca không trùng.');
 
@@ -392,6 +395,10 @@ export async function cancelDb(email: string): Promise<CancelResult> {
     await runTransaction(db, async (tx) => {
       const cfgSnap = await tx.get(doc(db, 'config', 'main'));
       const cfg = cfgSnap.exists() ? cfgSnap.data() : {};
+      // Enrollment lock blocks cancel too (rules' isEnrollmentOpen gates delete).
+      // Check client-side so the user gets a clear message, not a raw permission error.
+      if (cfg.allowEnrollment === false)
+        throw new Error('Đăng ký hiện đang bị khoá. Vui lòng liên hệ Ban tổ chức.');
       // Client-side deadline check is UX only — rules enforce real deadline.
       if (cfg.deadline && new Date() > (cfg.deadline as Timestamp).toDate())
         throw new Error('Đã hết hạn đăng ký. Không thể hủy.');
