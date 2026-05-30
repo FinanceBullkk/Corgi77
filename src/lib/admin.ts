@@ -9,7 +9,6 @@ import { db } from './firebase';
  * (see `fetchAdminEmails`).
  */
 export const ADMIN_EMAILS = [
-  'hao.nha@cyberlogitec.com',
   'phuc.lnk@cyberlogitec.com',
   'anhhao.dl108@gmail.com',
 ];

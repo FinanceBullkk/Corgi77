@@ -24,11 +24,16 @@ describe('isAdmin()', () => {
   });
 
   it('UC-A01: returns true for hardcoded admin email', () => {
-    expect(isAdmin('hao.nha@cyberlogitec.com')).toBe(true);
+    expect(isAdmin('phuc.lnk@cyberlogitec.com')).toBe(true);
   });
 
   it('UC-A02: returns true for hardcoded admin (case insensitive)', () => {
-    expect(isAdmin('HAO.NHA@CYBERLOGITEC.COM')).toBe(true);
+    expect(isAdmin('PHUC.LNK@CYBERLOGITEC.COM')).toBe(true);
+  });
+
+  it('UC-A02b: returns false for hao.nha (removed from admin)', () => {
+    expect(isAdmin('hao.nha@cyberlogitec.com')).toBe(false);
+    expect(isAdmin('HAO.NHA@CYBERLOGITEC.COM')).toBe(false);
   });
 
   it('UC-A03: returns false for non-admin email', () => {
@@ -71,11 +76,11 @@ describe('fetchAdminEmails()', () => {
 
   it('UC-A08: deduplicates emails ignoring case', async () => {
     mockGetDoc.mockResolvedValueOnce(
-      mockDocSnap(true, { adminEmails: ['HAO.NHA@CYBERLOGITEC.COM'] })
+      mockDocSnap(true, { adminEmails: ['PHUC.LNK@CYBERLOGITEC.COM'] })
     );
     const result = await fetchAdminEmails();
-    const haoCount = result.filter((e) => e === 'hao.nha@cyberlogitec.com').length;
-    expect(haoCount).toBe(1);
+    const count = result.filter((e) => e === 'phuc.lnk@cyberlogitec.com').length;
+    expect(count).toBe(1);
   });
 
   it('UC-A09: falls back to hardcoded list when Firestore read fails', async () => {
@@ -106,8 +111,8 @@ describe('fetchAdminEmails()', () => {
   });
 
   it('UC-A13: ADMIN_EMAILS constant contains expected bootstrap admins', () => {
-    expect(ADMIN_EMAILS).toContain('hao.nha@cyberlogitec.com');
     expect(ADMIN_EMAILS).toContain('phuc.lnk@cyberlogitec.com');
     expect(ADMIN_EMAILS).toContain('anhhao.dl108@gmail.com');
+    expect(ADMIN_EMAILS).not.toContain('hao.nha@cyberlogitec.com'); // removed
   });
 });

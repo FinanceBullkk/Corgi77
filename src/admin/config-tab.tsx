@@ -185,7 +185,6 @@ export function ConfigTab({
             <div className="set-label" style={{ fontSize: 'var(--fs-sm)', color: 'var(--ink-600)' }}>Admin mặc định (hardcoded)</div>
             <div className="set-desc">Luôn có quyền, không thể gỡ ở đây.</div>
             <div className="admin-chips">
-              <span className="admin-chip"><span className="dot">H</span>hao.nha <span className="lock">🔒</span></span>
               <span className="admin-chip"><span className="dot">P</span>phuc.lnk <span className="lock">🔒</span></span>
               <span className="admin-chip"><span className="dot">A</span>anhhao.dl108 <span className="lock">🔒</span></span>
             </div>

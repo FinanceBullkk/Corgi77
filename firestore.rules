@@ -9,7 +9,6 @@ service cloud.firestore {
     // even before /config/main exists.
     function isHardcodedAdmin() {
       return request.auth != null && request.auth.token.email in [
-        'hao.nha@cyberlogitec.com',
         'phuc.lnk@cyberlogitec.com',
         'anhhao.dl108@gmail.com'
       ];

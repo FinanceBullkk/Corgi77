@@ -290,7 +290,7 @@ describe('SEC: Privilege Escalation', () => {
     mockUpdateDoc.mockResolvedValueOnce(undefined);
 
     await updateConfig('hacker@evil.com', {
-      adminEmails: ['hacker@evil.com', 'hao.nha@cyberlogitec.com'],
+      adminEmails: ['hacker@evil.com', 'phuc.lnk@cyberlogitec.com'],
     });
 
     const { auditLog } = await import('../lib/audit');
@@ -331,13 +331,16 @@ describe('SEC: Privilege Escalation', () => {
   });
 
   it('SEC-12: Admin email homograph / case attacks -> rejected', () => {
-    expect(isAdmin('HAO.NHA@CYBERLOGITEC.COM')).toBe(true);
-    expect(isAdmin('hao.nha@cyberlogitec.com')).toBe(true);
+    expect(isAdmin('PHUC.LNK@CYBERLOGITEC.COM')).toBe(true);
+    expect(isAdmin('phuc.lnk@cyberlogitec.com')).toBe(true);
 
-    expect(isAdmin('hao.nha@cyberlogitec.com.evil.com')).toBe(false);
-    expect(isAdmin('hao.nha+admin@cyberlogitec.com')).toBe(false);
-    expect(isAdmin('hao.nha@cyberlogitec')).toBe(false);
-    expect(isAdmin('haoXnha@cyberlogitec.com')).toBe(false);
+    // hao.nha was removed from admin — must no longer be recognized
+    expect(isAdmin('hao.nha@cyberlogitec.com')).toBe(false);
+
+    expect(isAdmin('phuc.lnk@cyberlogitec.com.evil.com')).toBe(false);
+    expect(isAdmin('phuc.lnk+admin@cyberlogitec.com')).toBe(false);
+    expect(isAdmin('phuc.lnk@cyberlogitec')).toBe(false);
+    expect(isAdmin('phucXlnk@cyberlogitec.com')).toBe(false);
     expect(isAdmin('')).toBe(false);
     expect(isAdmin('admin')).toBe(false);
   });
