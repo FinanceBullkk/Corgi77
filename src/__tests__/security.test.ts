@@ -80,6 +80,7 @@ function setupPreflight() {
   mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
   mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
   mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
+  mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 }
 
 // ======================================================================
@@ -122,6 +123,7 @@ describe('SEC: XSS & Injection Attacks', () => {
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, emailConfirm: true })); // getConfig
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // checkIneligibility: not blocked
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {})); // checkIneligibility: requireEligibility off
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // checkIneligibility: empCode not claimed
 
     mockRunTransaction.mockImplementation(async (fn: any) => {
       const txGet = vi.fn();

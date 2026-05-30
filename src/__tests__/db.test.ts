@@ -1,7 +1,7 @@
 /**
  * Database Layer Test Suite
  *
- * UC-DB01 -> UC-DB07  : checkIneligibility()
+ * UC-DB01 -> UC-DB08  : checkIneligibility()
  * UC-DB08 -> UC-DB10  : initDb()
  * UC-DB11 -> UC-DB13  : bookDb() — validation
  * UC-DB14             : bookDb() — pre-flight blocklist
@@ -73,7 +73,7 @@ const TEST_SLOT_SKILLS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UC-DB01 -> UC-DB07: checkIneligibility()
+// UC-DB01 -> UC-DB08: checkIneligibility()
 // ═══════════════════════════════════════════════════════════════════════════
 describe('checkIneligibility()', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -121,6 +121,22 @@ describe('checkIneligibility()', () => {
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { requireEligibility: true }));
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
     const result = await checkIneligibility('262010');
+    expect(result).toBeNull();
+  });
+
+  it('UC-DB06B: returns reason when empCode is claimed by another email', async () => {
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { email: 'other@test.com' }));
+    const result = await checkIneligibility('262010', 'user@test.com');
+    expect(result).toContain('email khác');
+  });
+
+  it('UC-DB06C: returns null when empCode claim belongs to same email', async () => {
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { email: 'user@test.com' }));
+    const result = await checkIneligibility('262010', 'user@test.com');
     expect(result).toBeNull();
   });
 
@@ -245,6 +261,8 @@ describe('bookDb() — transaction', () => {
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
     // 3. checkIneligibility -> getDoc(config/main) for eligibility check -> no requireEligibility
     mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
+    // 4. checkIneligibility -> getDoc(empCodeClaims/code) -> not claimed
+    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
   }
 
   it('UC-DB15: successful new booking creates registration', async () => {

@@ -104,18 +104,20 @@ async function getMyBooking(email: string) {
 }
 
 /**
- * Blocklist check by empCode. Reads /ineligibility/{empCode}.
+ * Pre-flight eligibility check by empCode. Reads /ineligibility/{empCode},
+ * optional /eligibility/{empCode}, and optional /empCodeClaims/{empCode}.
  * Returns the human-readable reason if the user is blocked, or null if allowed.
  *
  * Default behaviour (empty /ineligibility collection): null = nobody blocked.
  * Server-side rules (`isNotBlocked()`) also enforce this on register write.
  *
- * Exported so the booking wizard can pre-flight at the Step 1 → Step 2
+ * Exported so the booking wizard can pre-flight at the Step 1 -> Step 2
  * transition (after user types empCode but before they pick slots).
  */
-export async function checkIneligibility(empCode: string): Promise<string | null> {
+export async function checkIneligibility(empCode: string, email?: string): Promise<string | null> {
   const code = empCode.trim();
   if (!code) return null; // empty empCode will fail other validation
+  const normalizedEmail = email?.trim();
   try {
     // 1. Blocklist check: /ineligibility/{empCode}
     const snap = await getDoc(doc(db, 'ineligibility', code));
@@ -136,6 +138,17 @@ export async function checkIneligibility(empCode: string): Promise<string | null
       const eligDoc = await getDoc(doc(db, 'eligibility', code));
       if (!eligDoc.exists()) {
         return 'Bạn không nằm trong danh sách đủ điều kiện đăng ký. Vui lòng liên hệ BTC.';
+      }
+    }
+
+    // 3. Active-registration uniqueness check: /empCodeClaims/{empCode}
+    //    If the code is already held by another email, fail at Step 1 instead
+    //    of waiting until final booking submit. The transaction in bookDb()
+    //    remains the hard guarantee against races.
+    if (normalizedEmail) {
+      const claimDoc = await getDoc(doc(db, 'empCodeClaims', code));
+      if (claimDoc.exists() && claimDoc.data().email !== normalizedEmail) {
+        return 'Mã NV này đã đăng ký bằng email khác.';
       }
     }
 
@@ -221,7 +234,7 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
   } catch (e) {
     return { ok: false, error: 'Không tải được cấu hình hệ thống.' };
   }
-  const blockReason = await checkIneligibility(trimmedEmpCode);
+  const blockReason = await checkIneligibility(trimmedEmpCode, email);
   if (blockReason) return { ok: false, error: blockReason };
 
   // Tracking vars set inside transaction (transactions may retry — final values win).

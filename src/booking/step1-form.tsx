@@ -6,10 +6,12 @@ import { checkIneligibility } from '../lib/db';
 // ─── Step 1 · Info Form ───────────────────────────────────────────────────
 
 export function Step1Form({
+  email,
   initial,
   onContinue,
   onCancel,
 }: {
+  email: string;
   initial: Step1Data;
   onContinue: (d: Step1Data) => void;
   onCancel?: () => void;
@@ -32,9 +34,9 @@ export function Step1Form({
     setBlockErr(null);
     setChecking(true);
     try {
-      // Pre-flight blocklist check via Firestore /ineligibility collection.
-      // bookDb() enforces the same list server-side as the hard guarantee.
-      const reason = await checkIneligibility(empCode);
+      // Pre-flight empCode checks. bookDb() still enforces the same checks in
+      // its transaction so this Step 1 gate stays a UX fast-fail, not the only guard.
+      const reason = await checkIneligibility(empCode, email);
       if (reason) {
         setBlockErr(reason);
         return;
@@ -63,7 +65,7 @@ export function Step1Form({
             </label>
             <input
               id="empCode"
-              className={`input ${empCode && !empValid ? 'error' : ''}`}
+              className={`input ${(empCode && !empValid) || blockErr ? 'error' : ''}`}
               placeholder="VD: 262010"
               value={empCode}
               onChange={(e) => { setEmpCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setBlockErr(null); }}
@@ -72,7 +74,8 @@ export function Step1Form({
               autoFocus
             />
             {empCode && !empValid && <span className="help error">⚠ Mã NV phải có đúng 6 chữ số</span>}
-            {empValid && <span className="help success">✓ Hợp lệ</span>}
+            {blockErr && <span className="help error">{blockErr}</span>}
+            {empValid && !blockErr && <span className="help success">✓ Hợp lệ</span>}
           </div>
 
           <div className="field">
@@ -105,15 +108,6 @@ export function Step1Form({
               {BU_LIST.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
           </div>
-
-          {blockErr && (
-            <div className="banner danger" style={{ marginTop: 'var(--s-4)' }}>
-              <span className="banner-icon">⛔</span>
-              <div>
-                <b>Không thể tiếp tục.</b> {blockErr}
-              </div>
-            </div>
-          )}
         </div>
         <div className="card-ft">
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

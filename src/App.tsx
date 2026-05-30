@@ -248,6 +248,7 @@ function AppInner() {
         {topbar}
         <main className="container">
           <Step1Form
+            email={data.email}
             initial={step1}
             onContinue={(d) => { setStep1(d); setScreen('step2'); }}
             onCancel={isEditing ? () => { setIsEditing(false); setScreen('display'); } : undefined}
