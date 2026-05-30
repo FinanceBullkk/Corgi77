@@ -9,6 +9,7 @@
  * UC-DB24             : bookDb() — error handling
  * UC-DB25 -> UC-DB28  : cancelDb()
  * UC-DB29 -> UC-DB38  : bookDb() — concurrency
+ * UC-DB39             : cancelDb() — enrollment-lock guard (C5 regression)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -595,6 +596,23 @@ describe('cancelDb()', () => {
     const result = await cancelDb('user@test.com');
     expect(result.ok).toBe(false);
     expect(result.error).toContain('TRANSACTION FAILED');
+  });
+
+  it('UC-DB39: rejects cancel when enrollment is locked (allowEnrollment=false)', async () => {
+    // C5 regression: a locked enrollment must block cancel with a clear message,
+    // not a raw permission error. Fails without the allowEnrollment guard in cancelDb
+    // (the next read would be the registration, which this mock does not provide).
+    mockRunTransaction.mockImplementation(async (fn: any) => {
+      const txGet = vi.fn();
+      txGet.mockResolvedValueOnce(mockDocSnap(true, {
+        ...TEST_CONFIG, allowEnrollment: false, deadline: null,
+      }));
+      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+    });
+
+    const result = await cancelDb('user@test.com');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('khoá');
   });
 });
 
