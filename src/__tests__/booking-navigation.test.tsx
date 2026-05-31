@@ -60,6 +60,7 @@ const BOOKED: InitResult = {
   clientNow: new Date().toISOString(),
   maxChanges: 3,
   buList: ['BSG', 'CHORUS', 'LBU', 'MOC', 'ONC', 'POC', 'TBU'],
+  assessmentName: 'Assessment Q2 2026',
 };
 
 const FRESH: InitResult = { ...BOOKED, myBooking: null };

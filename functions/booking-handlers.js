@@ -173,6 +173,8 @@ function createBookRegistrationHandler({ db, Timestamp, HttpsError, assertSigned
           assessmentName: typeof cfg.assessmentName === 'string' && cfg.assessmentName.trim()
             ? cfg.assessmentName.trim()
             : defaultAssessmentName,
+          empCode,
+          sequence: changeCount,
         };
       }
     });
@@ -188,6 +190,8 @@ function createBookRegistrationHandler({ db, Timestamp, HttpsError, assertSigned
           mailData.sk,
           mailData.isUpdate,
           mailData.assessmentName,
+          mailData.empCode,
+          mailData.sequence,
         );
       } catch (e) {
         console.warn('Confirmation email failed:', e);

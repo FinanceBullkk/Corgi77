@@ -31,6 +31,7 @@ export function BookingSuccessView({
           selection={selection}
           maxChanges={data.maxChanges}
           changeCount={data.myBooking?.changeCount ?? 0}
+          assessmentName={data.assessmentName}
           onViewDetail={onViewDetail}
         />
       </main>
@@ -63,6 +64,7 @@ export function CurrentBookingView({
           deadlinePassed={data.deadlinePassed}
           allowEnrollment={data.allowEnrollment}
           maxChanges={data.maxChanges}
+          assessmentName={data.assessmentName}
           onEdit={onEdit}
           onCancelled={onCancelled}
           onError={onError}

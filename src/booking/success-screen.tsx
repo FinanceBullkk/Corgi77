@@ -1,6 +1,7 @@
 import { SlotCard } from './slot-card';
 import { dayHeader, daysUntil, type Step1Data, type Selection } from './booking-utils';
 import { minToHHmm, type Slot } from '../lib/types';
+import { downloadBookingIcs } from '../lib/ics';
 
 // ─── Success Screen ───────────────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ export function SuccessScreen({
   selection,
   maxChanges,
   changeCount,
+  assessmentName,
   onViewDetail,
 }: {
   email: string;
@@ -21,6 +23,7 @@ export function SuccessScreen({
   selection: Selection;
   maxChanges: number;
   changeCount: number;
+  assessmentName: string;
   onViewDetail: () => void;
 }) {
   const sp = slots.find((s) => s.slotId === selection.speakingId);
@@ -78,9 +81,25 @@ export function SuccessScreen({
           <span>
             Còn <b style={{ color: 'var(--ink-900)' }}>{changesLeft}/{maxChanges}</b> lần đổi ca
           </span>
-          <button className="btn ghost sm" onClick={onViewDetail}>
-            Xem chi tiết →
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {sp && sk && (
+              <button
+                className="btn sm"
+                onClick={() => downloadBookingIcs({
+                  empCode: step1.empCode,
+                  sp,
+                  sk,
+                  sequence: changeCount,
+                  assessmentName,
+                })}
+              >
+                📅 Thêm 2 ca thi vào lịch
+              </button>
+            )}
+            <button className="btn ghost sm" onClick={onViewDetail}>
+              Xem chi tiết →
+            </button>
+          </div>
         </div>
       </div>
 

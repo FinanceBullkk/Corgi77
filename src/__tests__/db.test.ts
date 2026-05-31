@@ -209,6 +209,7 @@ describe('initDb()', () => {
     expect(result.slots).toHaveLength(2);
     expect(result.myBooking).toBeDefined();
     expect(result.myBooking?.empCode).toBe('262010');
+    expect(result.assessmentName).toBe('Assessment Q2 2026');
   });
 
   it('UC-DB09: returns myBooking=null when user has no registration', async () => {

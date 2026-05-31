@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type DocData = Record<string, any>;
 const realRequire = createRequire(import.meta.url);
+const { buildBookingIcs } = realRequire(join(process.cwd(), 'functions/ics-helpers.js'));
 
 class FakeHttpsError extends Error {
   code: string;
@@ -205,7 +206,7 @@ function loadFunctions(db: FakeDb) {
         },
       };
     }
-    if (id === './booking-handlers' || id === './cancel-handler' || id === './email-helpers' || id === './format-helpers' || id === './maintenance' || id === './repair-claims') {
+    if (id === './booking-handlers' || id === './cancel-handler' || id === './email-helpers' || id === './format-helpers' || id === './ics-helpers' || id === './maintenance' || id === './repair-claims') {
       return realRequire(join(process.cwd(), 'functions', `${id.slice(2)}.js`));
     }
     throw new Error(`Unexpected require: ${id}`);
@@ -231,6 +232,40 @@ describe('Cloud Functions booking handlers', () => {
   beforeEach(() => {
     db = new FakeDb();
     fns = loadFunctions(db);
+  });
+
+  it('builds booking ICS with stable UIDs, sequence, alarms, CRLF, escaping and UTC times', () => {
+    const ics = buildBookingIcs({
+      empCode: '262010',
+      sp: {
+        type: 'Speaking',
+        date: '2026-06-22',
+        startMin: 540,
+        endMin: 600,
+        location: 'Room A, B; C',
+      },
+      sk: {
+        type: '3 Skills',
+        date: '2026-06-22',
+        startMin: 660,
+        endMin: 840,
+        location: 'Room D',
+      },
+      sequence: 2,
+      assessmentName: 'Assessment Q2 2026',
+      now: new Date('2026-05-31T00:00:00.000Z'),
+    });
+
+    expect(ics).toContain('BEGIN:VCALENDAR');
+    expect((ics.match(/BEGIN:VEVENT/g) || [])).toHaveLength(2);
+    expect((ics.match(/BEGIN:VALARM/g) || [])).toHaveLength(4);
+    expect(ics).toContain('UID:262010-SP@assessment-booking');
+    expect(ics).toContain('UID:262010-3S@assessment-booking');
+    expect(ics).toContain('DTSTART:20260622T020000Z');
+    expect(ics).toContain('SEQUENCE:2');
+    expect(ics).toContain('LOCATION:Room A\\, B\\; C');
+    expect(ics).toContain('\r\n');
+    expect(ics.endsWith('\r\n')).toBe(true);
   });
 
   it('rejects unauthenticated booking requests', async () => {
@@ -379,6 +414,11 @@ describe('Cloud Functions booking handlers', () => {
     expect(mail?.to).toBe('attacker@test.com');
     expect(mail?.message.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(mail?.message.html).not.toContain('<script>alert(1)</script>');
+    expect(mail?.message.attachments?.[0]).toMatchObject({
+      filename: 'lich-thi-assessment.ics',
+      contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
+    });
+    expect(mail?.message.attachments?.[0].content).toContain('BEGIN:VCALENDAR');
   });
 
   it('cancels a booking, restores seats, removes claim and preserves quota', async () => {

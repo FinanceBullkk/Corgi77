@@ -1,4 +1,5 @@
 const { minToHHmm } = require('./format-helpers');
+const { buildBookingIcs } = require('./ics-helpers');
 
 function escHtml(s) {
   const amp = '&' + 'amp;';
@@ -14,12 +15,13 @@ function escHtml(s) {
     .replace(/'/g, apos);
 }
 
-async function queueConfirmationEmail(db, email, fullName, sp, sk, isUpdate, assessmentName) {
+async function queueConfirmationEmail(db, email, fullName, sp, sk, isUpdate, assessmentName, empCode, sequence) {
   const fmtSlot = (s) => {
     const [, mo, d] = s.date.split('-');
     return `${d}/${mo} · ${minToHHmm(s.startMin)}-${minToHHmm(s.endMin)}${s.location ? ' · ' + escHtml(s.location) : ''}`;
   };
   const verb = isUpdate ? 'cập nhật' : 'đăng ký';
+  const ics = buildBookingIcs({ empCode, sp, sk, sequence, assessmentName });
   await db.collection('mail').add({
     to: email,
     message: {
@@ -34,6 +36,11 @@ async function queueConfirmationEmail(db, email, fullName, sp, sk, isUpdate, ass
         <p>Nếu cần đổi/huỷ, vui lòng truy cập lại hệ thống trước thời hạn.</p>
         <p>- Ban tổ chức Assessment</p>
       `,
+      attachments: [{
+        filename: 'lich-thi-assessment.ics',
+        content: ics,
+        contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
+      }],
     },
   });
 }

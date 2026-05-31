@@ -41,6 +41,7 @@ export interface InitResult {
   clientNow: string;
   maxChanges: number;
   buList: string[];
+  assessmentName: string;
 }
 
 export interface BookPayload {

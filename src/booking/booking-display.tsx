@@ -4,6 +4,7 @@ import { dayHeader, daysUntil } from './booking-utils';
 import { minToHHmm, type Slot, type MyBooking, type InitResult } from '../lib/types';
 import { useConfirm } from '../confirm-toast-provider';
 import { cancelDb } from '../lib/db';
+import { downloadBookingIcs } from '../lib/ics';
 
 // ─── Booking Display ──────────────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ export function BookingDisplay({
   deadlinePassed,
   allowEnrollment,
   maxChanges,
+  assessmentName,
   onEdit,
   onCancelled,
   onError,
@@ -24,6 +26,7 @@ export function BookingDisplay({
   deadlinePassed: boolean;
   allowEnrollment: boolean;
   maxChanges: number;
+  assessmentName: string;
   onEdit: () => void;
   onCancelled: (state: InitResult) => void;
   onError: (msg: string) => void;
@@ -158,6 +161,20 @@ export function BookingDisplay({
           <span>
             Còn <b style={{ color: 'var(--ink-900)' }}>{changesLeft}/{maxChanges}</b> lần đổi ca
           </span>
+          {sp && sk && (
+            <button
+              className="btn sm"
+              onClick={() => downloadBookingIcs({
+                empCode: booking.empCode,
+                sp,
+                sk,
+                sequence: booking.changeCount,
+                assessmentName,
+              })}
+            >
+              📅 Thêm 2 ca thi vào lịch
+            </button>
+          )}
         </div>
       </div>
 

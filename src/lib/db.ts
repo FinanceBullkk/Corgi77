@@ -12,6 +12,7 @@ import { slotFromDoc } from './slot-helpers';
 
 const DEFAULT_MAX_CHANGES = 3; // Sync with functions/index.js DEFAULT_MAX_CHANGES.
 const DEFAULT_BU_LIST = ['BSG', 'CHORUS', 'LBU', 'MOC', 'ONC', 'POC', 'TBU'];
+const DEFAULT_ASSESSMENT_NAME = 'Assessment Q2 2026'; // Sync with functions/index.js DEFAULT_ASSESSMENT_NAME.
 
 interface ConfigData {
   deadline: string | null;
@@ -20,6 +21,7 @@ interface ConfigData {
   maxChanges: number;
   emailConfirm: boolean;
   buList: string[];
+  assessmentName: string;
 }
 
 async function getConfig(): Promise<ConfigData> {
@@ -40,6 +42,9 @@ async function getConfig(): Promise<ConfigData> {
     buList: Array.isArray(d.buList) && d.buList.length > 0
       ? d.buList.map(String)
       : DEFAULT_BU_LIST,
+    assessmentName: typeof d.assessmentName === 'string' && d.assessmentName.trim()
+      ? d.assessmentName.trim()
+      : DEFAULT_ASSESSMENT_NAME,
   };
 }
 
@@ -147,6 +152,7 @@ export async function initDb(email: string): Promise<InitResult> {
     clientNow: new Date().toISOString(),
     maxChanges: cfg.maxChanges,
     buList: cfg.buList,
+    assessmentName: cfg.assessmentName,
   };
 }
 
