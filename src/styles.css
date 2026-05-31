@@ -519,8 +519,9 @@ label.field span:first-child { display: block; font-size: var(--fs-sm); color: v
 .menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 200px; background: var(--white); border: 1px solid var(--ink-150); border-radius: var(--r-md); box-shadow: var(--sh-4); padding: var(--s-1); z-index: var(--z-overlay); }
 .menu-item { display: flex; align-items: center; gap: var(--s-2); padding: 8px 10px; border-radius: var(--r-xs); cursor: pointer; font-size: var(--fs-sm); color: var(--ink-700); background: transparent; border: 0; width: 100%; text-align: left; font-family: inherit; }
 .menu-item:hover { background: var(--ink-50); }
-.menu-item.danger { color: var(--danger-600); }
-.menu-item.danger:hover { background: var(--danger-50); }
+.menu .menu-item.danger { height: auto; padding: 8px 10px; border: 0; background: transparent; color: var(--danger-700); font-weight: 600; }
+.menu .menu-item.danger:hover { background: var(--danger-50); color: var(--danger-700); }
+.menu .menu-item.danger:focus-visible { outline: none; box-shadow: var(--sh-focus-danger); }
 .menu-divider { height: 1px; background: var(--ink-100); margin: 4px 0; }
 
 /* ─── Animated loading dots ──────────────────────────────────────────── */

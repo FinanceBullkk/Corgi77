@@ -152,10 +152,6 @@ export function BookingDisplay({
               <b>{email}</b>
             </div>
             <div>
-              <span>Trạng thái</span>
-              <b>Đã đăng ký</b>
-            </div>
-            <div>
               <span>Thời điểm đăng ký</span>
               <b>{booking.createdAt ? new Date(booking.createdAt).toLocaleString('vi-VN') : 'Chưa có dữ liệu'}</b>
             </div>
@@ -198,9 +194,6 @@ export function BookingDisplay({
           </div>
         </div>
         <div className="card-ft">
-          <span>
-            Còn <b style={{ color: 'var(--ink-900)' }}>{changesLeft}/{maxChanges}</b> lần đổi ca
-          </span>
           {sp && sk && (
             <button
               className="btn sm"
