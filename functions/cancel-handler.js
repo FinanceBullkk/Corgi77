@@ -1,3 +1,5 @@
+const { buildClientState } = require('./client-state');
+
 function createCancelRegistrationHandler({ db, Timestamp, HttpsError, assertSignedIn, addAudit, userRateLimitMs }) {
   function businessError(message) {
     return new HttpsError('failed-precondition', message);
@@ -21,23 +23,27 @@ function createCancelRegistrationHandler({ db, Timestamp, HttpsError, assertSign
     const email = assertSignedIn(request);
 
     await db.runTransaction(async (tx) => {
-      const cfgSnap = await tx.get(db.doc('config/main'));
+      const regRef = db.doc(`registrations/${email}`);
+      const userRateRef = rateLimitRef('cancelRegistration', email);
+      const [cfgSnap, regSnap, rateSnap] = await Promise.all([
+        tx.get(db.doc('config/main')),
+        tx.get(regRef),
+        tx.get(userRateRef),
+      ]);
+
       const cfg = cfgSnap.exists ? cfgSnap.data() : {};
       if (cfg.allowEnrollment === false) throw businessError('Đăng ký hiện đang bị khoá. Vui lòng liên hệ Ban tổ chức.');
       if (cfg.deadline && Date.now() > cfg.deadline.toDate().getTime()) throw businessError('Đã hết hạn đăng ký. Không thể hủy.');
-
-      const regRef = db.doc(`registrations/${email}`);
-      const userRateRef = rateLimitRef('cancelRegistration', email);
-      const regSnap = await tx.get(regRef);
-      const rateSnap = await tx.get(userRateRef);
       assertNotRateLimited(rateSnap);
       if (!regSnap.exists) throw businessError('Bạn chưa có đăng ký nào để hủy.');
       const reg = regSnap.data();
 
-      const spSnap = reg.speakingSlotId ? await tx.get(db.doc(`slots/${reg.speakingSlotId}`)) : null;
-      const skSnap = reg.skillsSlotId ? await tx.get(db.doc(`slots/${reg.skillsSlotId}`)) : null;
       const claimRef = typeof reg.empCode === 'string' ? db.doc(`empCodeClaims/${reg.empCode}`) : null;
-      const claimSnap = claimRef ? await tx.get(claimRef) : null;
+      const [spSnap, skSnap, claimSnap] = await Promise.all([
+        reg.speakingSlotId ? tx.get(db.doc(`slots/${reg.speakingSlotId}`)) : Promise.resolve(null),
+        reg.skillsSlotId ? tx.get(db.doc(`slots/${reg.skillsSlotId}`)) : Promise.resolve(null),
+        claimRef ? tx.get(claimRef) : Promise.resolve(null),
+      ]);
 
       if (spSnap?.exists) tx.update(spSnap.ref, { remaining: (spSnap.data().remaining ?? 0) + 1 });
       if (skSnap?.exists) tx.update(skSnap.ref, { remaining: (skSnap.data().remaining ?? 0) + 1 });
@@ -50,8 +56,13 @@ function createCancelRegistrationHandler({ db, Timestamp, HttpsError, assertSign
       });
     });
 
-    await addAudit(email, 'book.cancel', {});
-    return { ok: true };
+    // Audit + fresh state in parallel; state is returned so the client skips
+    // a post-cancel initDb() round-trip.
+    const [, state] = await Promise.all([
+      addAudit(email, 'book.cancel', {}),
+      buildClientState(db, email),
+    ]);
+    return { ok: true, state };
   };
 }
 

@@ -53,6 +53,12 @@ export function BookingFlow({
     setEmailQueued(false);
   }, [data.email]);
 
+  // Warm the Functions SDK chunk in the background so the first submit doesn't
+  // pay the dynamic import() cost on the critical path.
+  useEffect(() => {
+    import('firebase/functions').catch(() => {});
+  }, []);
+
   const deadlineInfo = computeDeadline(data.deadline, data.clientNow, data.deadlinePassed, skew);
   const curSpId = isEditing ? (data.myBooking?.speakingSlotId ?? null) : null;
   const curSkId = isEditing ? (data.myBooking?.skillsSlotId ?? null) : null;
