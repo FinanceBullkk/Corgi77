@@ -293,6 +293,10 @@ label.field span:first-child { display: block; font-size: var(--fs-sm); color: v
 /* ─── Utility ────────────────────────────────────────────────────────── */
 .text-muted { color: var(--ink-500); }
 .text-sm { font-size: var(--fs-sm); }
+.booking-meta-grid { margin-top: var(--s-4); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+.booking-meta-grid > div { min-width: 0; padding: var(--s-3); border: 1px solid var(--ink-150); border-radius: var(--r-md); background: var(--ink-25); }
+.booking-meta-grid span { display: block; margin-bottom: var(--s-1); color: var(--ink-500); font-size: var(--fs-xs); font-weight: 600; }
+.booking-meta-grid b { display: block; color: var(--ink-900); font-size: var(--fs-sm); font-weight: 600; overflow-wrap: anywhere; }
 .text-xs { font-size: var(--fs-xs); }
 .mt-1 { margin-top: var(--s-1); } .mt-2 { margin-top: var(--s-2); } .mt-3 { margin-top: var(--s-3); }
 .mt-4 { margin-top: var(--s-4); } .mt-5 { margin-top: var(--s-5); } .mt-6 { margin-top: var(--s-6); }
@@ -697,6 +701,7 @@ label.field span:first-child { display: block; font-size: var(--fs-sm); color: v
   .container { padding: var(--s-4) var(--s-3) var(--s-12); }
   .profile-row .info { flex-wrap: wrap; gap: var(--s-2); }
   .profile-row .info-sep { display: none; }
+  .booking-meta-grid { grid-template-columns: 1fr; }
   .app-header h1 { font-size: 18px; }
 }
 

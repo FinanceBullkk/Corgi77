@@ -113,7 +113,12 @@ export function BookingDisplay({
           marginBottom: 'var(--s-4)',
         }}
       >
-        <h1 style={{ fontSize: 'var(--fs-xl)' }}>Lịch thi của bạn</h1>
+        <div>
+          <h1 style={{ fontSize: 'var(--fs-xl)' }}>Lịch thi của bạn</h1>
+          <p className="text-sm text-muted" style={{ marginTop: 4 }}>
+            Xem thông tin đăng ký, đổi ca hoặc hủy đăng ký trước hạn.
+          </p>
+        </div>
         <span className="pill success">✓ Đã đăng ký</span>
       </div>
 
@@ -140,6 +145,24 @@ export function BookingDisplay({
           </div>
           <div className="text-sm">
             <b>{booking.fullName}</b> · {booking.empCode} · {booking.bu}
+          </div>
+          <div className="booking-meta-grid">
+            <div>
+              <span>Email</span>
+              <b>{email}</b>
+            </div>
+            <div>
+              <span>Trạng thái</span>
+              <b>Đã đăng ký</b>
+            </div>
+            <div>
+              <span>Thời điểm đăng ký</span>
+              <b>{booking.createdAt ? new Date(booking.createdAt).toLocaleString('vi-VN') : 'Chưa có dữ liệu'}</b>
+            </div>
+            <div>
+              <span>Lượt đổi còn lại</span>
+              <b>{changesLeft}/{maxChanges}</b>
+            </div>
           </div>
         </div>
         <div className="card-bd">
@@ -175,14 +198,6 @@ export function BookingDisplay({
           </div>
         </div>
         <div className="card-ft">
-          {booking.createdAt && (
-            <span>
-              Đăng ký:{' '}
-              <b style={{ color: 'var(--ink-700)' }}>
-                {new Date(booking.createdAt).toLocaleString('vi-VN')}
-              </b>
-            </span>
-          )}
           <span>
             Còn <b style={{ color: 'var(--ink-900)' }}>{changesLeft}/{maxChanges}</b> lần đổi ca
           </span>

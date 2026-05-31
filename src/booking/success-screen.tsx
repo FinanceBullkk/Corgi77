@@ -118,7 +118,7 @@ export function SuccessScreen({
               </button>
             )}
             <button className="btn ghost sm" onClick={onViewDetail}>
-              Xem chi tiết →
+              Quản lý đăng ký →
             </button>
           </div>
         </div>
@@ -131,13 +131,6 @@ export function SuccessScreen({
         </div>
       )}
 
-      <div className="banner info mt-4">
-        <span className="banner-icon">📨</span>
-        <div>
-          <b>Lưu ý:</b> Mang theo CCCD/Thẻ NV khi tới phòng thi. Reminder sẽ gửi trước ngày thi 7
-          / 3 / 1 ngày.
-        </div>
-      </div>
     </>
   );
 }
