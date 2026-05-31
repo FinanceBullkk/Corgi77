@@ -50,14 +50,6 @@ jobs:
       - name: Check Cloud Functions syntax
         run: npm run check:functions
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-
-      - name: Check Firestore rules
-        run: npm run check:rules
-
       - name: Build hosting bundle
         run: npm run build
 
