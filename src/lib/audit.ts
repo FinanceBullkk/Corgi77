@@ -1,5 +1,6 @@
 import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from './firebase';
+import { captureError } from './monitoring';
 
 export type AuditEvent =
   | 'book.create'
@@ -13,7 +14,9 @@ export type AuditEvent =
   | 'admin.updateConfig'
   | 'admin.upsertIneligibility'
   | 'admin.deleteIneligibility'
-  | 'admin.backfillEmpCodeClaims';
+  | 'admin.backfillEmpCodeClaims'
+  | 'admin.cleanupRegistrationEmailFields'
+  | 'admin.cleanupFunctionRateLimits';
 
 /**
  * Append an immutable entry to /auditLogs.
@@ -33,8 +36,8 @@ export async function auditLog(
       detail: detail ?? {},
     });
   } catch (e) {
-    // Never block the caller — just log to console
-    console.warn('Audit log failed (non-blocking):', e);
+    // Never block the caller.
+    captureError(e, { operation: 'auditLog' });
   }
 }
 

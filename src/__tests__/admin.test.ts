@@ -15,6 +15,16 @@ vi.mock('firebase/firestore', () => ({
 import { isAdmin, fetchAdminEmails, ADMIN_EMAILS } from '../lib/admin';
 import { mockDocSnap } from './mocks/firebase';
 
+function setupGetDocByPath(records: Record<string, false | Record<string, unknown>>, rejectPaths: Record<string, Error> = {}) {
+  mockGetDoc.mockImplementation((ref: { path: string }) => {
+    const err = rejectPaths[ref.path];
+    if (err) return Promise.reject(err);
+    const value = records[ref.path];
+    if (value === undefined || value === false) return Promise.resolve(mockDocSnap(false));
+    return Promise.resolve(mockDocSnap(true, value));
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // UC-A01 -> UC-A06: isAdmin() before config cache is loaded
 // ═══════════════════════════════════════════════════════════════════════════
@@ -55,47 +65,42 @@ describe('isAdmin()', () => {
 describe('fetchAdminEmails()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetDoc.mockReset();
   });
 
   it('UC-A07: loads admins from /config/main.adminEmails', async () => {
-    mockGetDoc.mockResolvedValueOnce(
-      mockDocSnap(true, { adminEmails: ['admin@test.com', 'owner@test.com'] })
-    );
+    setupGetDocByPath({ 'config/main': { adminEmails: ['admin@test.com', 'owner@test.com'] } });
     const result = await fetchAdminEmails();
     expect(result).toEqual(['admin@test.com', 'owner@test.com']);
   });
 
   it('UC-A08: normalizes, trims, removes empty values, and deduplicates emails', async () => {
-    mockGetDoc.mockResolvedValueOnce(
-      mockDocSnap(true, { adminEmails: [' ADMIN@Test.com ', '', 'admin@test.com'] })
-    );
+    setupGetDocByPath({ 'config/main': { adminEmails: [' ADMIN@Test.com ', '', 'admin@test.com'] } });
     const result = await fetchAdminEmails();
     expect(result).toEqual(['admin@test.com']);
   });
 
   it('UC-A09: does not fall back to built-in personal emails when Firestore read fails', async () => {
-    mockGetDoc.mockRejectedValueOnce(new Error('Network error'));
+    setupGetDocByPath({}, { 'config/main': new Error('Network error') });
     const result = await fetchAdminEmails();
     expect(result).toEqual([]);
     expect(ADMIN_EMAILS).toEqual([]);
   });
 
   it('UC-A10: handles missing config document gracefully', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+    setupGetDocByPath({ 'config/main': false });
     const result = await fetchAdminEmails();
     expect(result).toEqual([]);
   });
 
   it('UC-A11: handles config with empty adminEmails array', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { adminEmails: [] }));
+    setupGetDocByPath({ 'config/main': { adminEmails: [] } });
     const result = await fetchAdminEmails();
     expect(result).toEqual([]);
   });
 
   it('UC-A12: returns cached result on subsequent isAdmin calls after fetch', async () => {
-    mockGetDoc.mockResolvedValueOnce(
-      mockDocSnap(true, { adminEmails: ['dynamic@test.com'] })
-    );
+    setupGetDocByPath({ 'config/main': { adminEmails: ['dynamic@test.com'] } });
     await fetchAdminEmails();
     expect(isAdmin('dynamic@test.com')).toBe(true);
     expect(isAdmin('DYNAMIC@TEST.COM')).toBe(true);

@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { type Slot } from '../lib/types';
 import {
   adminDeleteRegistration,
+  cleanupRegistrationEmailFields,
+  downloadAllRegistrationsCsv,
   downloadRegistrationsCsv,
   type BackfillEmpCodeClaimsResult,
   type Registration,
@@ -37,6 +39,7 @@ export function RegistrationsTab({
   const [bu, setBu] = useState('all');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{ loaded: number; total: number } | null>(null);
   const confirm = useConfirm();
   const toast = useToast();
 
@@ -116,6 +119,31 @@ export function RegistrationsTab({
     downloadRegistrationsCsv(chosen, slots);
   };
 
+  const exportAll = async () => {
+    setExportProgress({ loaded: 0, total: regsTotal });
+    try {
+      await downloadAllRegistrationsCsv(slots, setExportProgress);
+      toast('success', `Đã xuất ${regsTotal} đăng ký.`);
+    } catch (e) {
+      toast('error', (e as Error).message || 'Xuất CSV thất bại.');
+    } finally {
+      setExportProgress(null);
+    }
+  };
+
+  const cleanupEmailField = async () => {
+    setBusy(true);
+    try {
+      const result = await cleanupRegistrationEmailFields(adminEmail);
+      toast('success', `Đã dọn ${result.cleaned}/${result.scanned} registration có email dư.`);
+      onReload();
+    } catch (e) {
+      toast('error', (e as Error).message || 'Dọn email dư thất bại.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const claimSyncBanner = (() => {
     if (claimSync.status === 'running') {
       return <div className="banner info mb-4"><div>Đang tự đồng bộ khóa mã NV...</div></div>;
@@ -156,7 +184,12 @@ export function RegistrationsTab({
           <div className="spacer" />
           <span className="text-sm text-muted">{filtered.length}/{regsTotal} đăng ký</span>
           {claimSync.status === 'ok' && <span className="text-sm text-muted">Mã NV đã tự đồng bộ</span>}
-          <button type="button" className="btn sm" onClick={() => downloadRegistrationsCsv(regs, slots)}>⬇ Xuất CSV ({regs.length})</button>
+          <button type="button" className="btn ghost sm" disabled={busy} onClick={cleanupEmailField}>Dọn email dư</button>
+          <button type="button" className="btn sm" disabled={!!exportProgress} onClick={exportAll}>
+            {exportProgress
+              ? `Đang xuất ${exportProgress.loaded}/${exportProgress.total || regsTotal}`
+              : `⬇ Xuất CSV (${regsTotal})`}
+          </button>
         </div>
       )}
       {claimSyncBanner}

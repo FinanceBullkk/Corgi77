@@ -1,19 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { formatDateVi, minToHHmm, type InitResult } from './lib/types';
-import { initDb, bookDb } from './lib/db';
+import type { InitResult } from './lib/types';
+import { initDb } from './lib/db';
 import { fetchAdminEmails, isAdmin } from './lib/admin';
 import { onAuth, signInWithGoogle, signOutUser } from './lib/firebase';
 import type { User } from 'firebase/auth';
 import { ConfirmProvider, useConfirm, useToast } from './confirm-toast-provider';
 import { captureError, friendlyFirestoreError } from './lib/monitoring';
 import { ErrorBoundary } from './components/error-boundary';
-import { computeDeadline, type FlowState, type Step1Data, type Selection } from './booking/booking-utils';
-import { Topbar } from './booking/booking-chrome';
-import { Step1Form } from './booking/step1-form';
-import { CalendarStep } from './booking/calendar-step';
-import { ConfirmModal } from './booking/confirm-modal';
-import { SuccessScreen } from './booking/success-screen';
-import { BookingDisplay } from './booking/booking-display';
+import { BookingFlow } from './booking/booking-flow';
 
 // Lazy-loaded so the admin bundle is code-split out of the booking critical path.
 const AdminPanel = lazy(() => import('./AdminPanel').then((m) => ({ default: m.AdminPanel })));
@@ -35,11 +29,6 @@ function AppInner() {
   const [authLoading, setAuthLoading] = useState(true);
   const [data, setData] = useState<InitResult | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [screen, setScreen] = useState<FlowState>('step1');
-  const [step1, setStep1] = useState<Step1Data>({ empCode: '', fullName: '', bu: '' });
-  const [selection, setSelection] = useState<Selection>({ speakingId: null, skillsId: null });
-  const [isEditing, setIsEditing] = useState(false);
-  const [emailQueued, setEmailQueued] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [canAdmin, setCanAdmin] = useState(false);
   const skewRef = useRef(0);
@@ -72,15 +61,8 @@ function AppInner() {
     if (!authUser?.email) return;
     initDb(authUser.email)
       .then((d) => {
-        skewRef.current = new Date(d.serverNow).getTime() - Date.now();
+        skewRef.current = new Date(d.clientNow).getTime() - Date.now();
         setData(d);
-        if (d.myBooking) {
-          setScreen('display');
-          setStep1({ empCode: d.myBooking.empCode, fullName: d.myBooking.fullName, bu: d.myBooking.bu });
-          setSelection({ speakingId: d.myBooking.speakingSlotId, skillsId: d.myBooking.skillsSlotId });
-        } else {
-          setScreen('step1');
-        }
       })
       .catch((e: Error) => {
         captureError(e, { operation: 'initDb.onMount' });
@@ -203,243 +185,14 @@ function AppInner() {
     );
   }
 
-  const deadlineInfo = computeDeadline(data.deadline, data.serverNow, data.deadlinePassed, skewRef.current);
-  const spSel = data.slots.find((s) => s.slotId === selection.speakingId) ?? null;
-  const skSel = data.slots.find((s) => s.slotId === selection.skillsId) ?? null;
-  const curSpId = isEditing ? (data.myBooking?.speakingSlotId ?? null) : null;
-  const curSkId = isEditing ? (data.myBooking?.skillsSlotId ?? null) : null;
-
-  const topbar = (
-    <Topbar
-      email={data.email}
-      deadlineInfo={deadlineInfo}
+  return (
+    <BookingFlow
+      data={data}
+      setData={setData}
       canAdmin={canAdmin}
+      skew={skewRef.current}
       onOpenAdmin={openAdmin}
       onSignOut={handleSignOut}
     />
   );
-
-  // ── Step 1
-  if (screen === 'step1') {
-    if (!isEditing && !data.allowEnrollment) {
-      return (
-        <div className="app">
-          {topbar}
-          <main className="container">
-            <div className="banner warn mt-4">
-              <span className="banner-icon">🔒</span>
-              <div>Đăng ký hiện đang bị khoá. Vui lòng liên hệ Ban tổ chức.</div>
-            </div>
-          </main>
-        </div>
-      );
-    }
-    if (!isEditing && data.deadlinePassed) {
-      return (
-        <div className="app">
-          {topbar}
-          <main className="container">
-            <div className="banner danger mt-4">
-              <span className="banner-icon">⏰</span>
-              <div>Đã hết hạn đăng ký. Bạn chưa đăng ký ca thi — vui lòng liên hệ Ban tổ chức.</div>
-            </div>
-          </main>
-        </div>
-      );
-    }
-    return (
-      <div className="app">
-        {topbar}
-        <main className="container">
-          <Step1Form
-            email={data.email}
-            initial={step1}
-            onContinue={(d) => { setStep1(d); setScreen('step2'); }}
-            onCancel={isEditing ? () => { setIsEditing(false); setScreen('display'); } : undefined}
-          />
-        </main>
-      </div>
-    );
-  }
-
-  // ── Step 2 + Confirm overlay
-  if (screen === 'step2' || screen === 'confirm') {
-    const canSubmit = !!(selection.speakingId && selection.skillsId);
-
-    const handleConfirmSubmit = async () => {
-      if (!selection.speakingId || !selection.skillsId) return;
-      // F13: editing with same empCode + same slots → no-op, no quota consumed
-      if (isEditing
-        && step1.empCode === (data.myBooking?.empCode ?? '')
-        && selection.speakingId === curSpId
-        && selection.skillsId === curSkId) {
-        setIsEditing(false);
-        setScreen('display');
-        return;
-      }
-      try {
-        // bookDb() enforces the blocklist server-side and returns res.error,
-        // which is surfaced below — covers any path that skipped the Step 1 gate.
-        const res = await bookDb(data.email, {
-          empCode: step1.empCode,
-          fullName: step1.fullName,
-          bu: step1.bu,
-          speakingSlotId: selection.speakingId,
-          skillsSlotId: selection.skillsId,
-        });
-        if (!res.ok) {
-          pushToast('error', res.error || 'Đăng ký thất bại.');
-          if (res.state) setData(res.state);
-          setScreen('step2');
-        } else if (res.state) {
-          setData(res.state);
-          setIsEditing(false);
-          setEmailQueued(!!res.emailSent);
-          setScreen('success');
-        } else {
-          pushToast('error', 'Đăng ký thành công nhưng không nhận được state. Tải lại trang.');
-          setScreen('step2');
-        }
-      } catch (e) {
-        pushToast('error', (e as Error).message || 'Đăng ký thất bại.');
-        setScreen('step2');
-      }
-    };
-
-    return (
-      <div className="app">
-        {topbar}
-        <main className="container wide" style={{ paddingBottom: 24 }}>
-          <CalendarStep
-            step1={step1}
-            slots={data.slots}
-            selection={selection}
-            setSelection={setSelection}
-            curSpId={curSpId}
-            curSkId={curSkId}
-            deadlinePassed={data.deadlinePassed}
-            onBack={() => setScreen('step1')}
-          />
-        </main>
-
-        {screen === 'confirm' && (
-          <ConfirmModal
-            step1={step1}
-            slots={data.slots}
-            selection={selection}
-            isEditing={isEditing}
-            maxChanges={data.maxChanges}
-            changeCount={data.myBooking?.changeCount ?? 0}
-            onCancel={() => setScreen('step2')}
-            onConfirm={handleConfirmSubmit}
-          />
-        )}
-
-        <div className="sticky-summary">
-          <div className="sticky-summary-inner">
-            <div className="summary-items">
-              <div className={`summary-item ${spSel ? 'filled' : ''}`}>
-                <div className="badge">①</div>
-                <div>
-                  <div className="lbl">Speaking</div>
-                  <div className={`val ${spSel ? '' : 'empty'}`}>
-                    {spSel
-                      ? `${formatDateVi(spSel.date)} · ${minToHHmm(spSel.startMin)}–${minToHHmm(spSel.endMin)}`
-                      : 'Chưa chọn ca'}
-                  </div>
-                </div>
-              </div>
-              <div className={`summary-item ${skSel ? 'filled' : ''}`}>
-                <div className="badge">②</div>
-                <div>
-                  <div className="lbl">3 Skills</div>
-                  <div className={`val ${skSel ? '' : 'empty'}`}>
-                    {skSel
-                      ? `${formatDateVi(skSel.date)} · ${minToHHmm(skSel.startMin)}–${minToHHmm(skSel.endMin)}`
-                      : 'Chưa chọn ca'}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-              <button className="btn ghost" onClick={() => setScreen('step1')}>← Quay lại</button>
-              <button
-                className={`btn ${canSubmit ? '' : 'disabled'}`}
-                disabled={!canSubmit}
-                onClick={() => setScreen('confirm')}
-              >
-                Tiếp tục →
-              </button>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    );
-  }
-
-  // ── Success
-  if (screen === 'success') {
-    return (
-      <div className="app">
-        {topbar}
-        <main className="container">
-          <SuccessScreen
-            email={data.email}
-            emailSent={emailQueued}
-            step1={step1}
-            slots={data.slots}
-            selection={selection}
-            maxChanges={data.maxChanges}
-            changeCount={data.myBooking?.changeCount ?? 0}
-            onViewDetail={() => {
-              if (data.myBooking) {
-                setSelection({ speakingId: data.myBooking.speakingSlotId, skillsId: data.myBooking.skillsSlotId });
-              }
-              setScreen('display');
-            }}
-          />
-        </main>
-      </div>
-    );
-  }
-
-  // ── Display
-  if (screen === 'display' && data.myBooking) {
-    return (
-      <div className="app">
-        {topbar}
-        <main className="container">
-          <BookingDisplay
-            email={data.email}
-            booking={data.myBooking}
-            slots={data.slots}
-            deadlinePassed={data.deadlinePassed}
-            allowEnrollment={data.allowEnrollment}
-            maxChanges={data.maxChanges}
-            onEdit={() => {
-              setIsEditing(true);
-              if (data.myBooking) {
-                setSelection({ speakingId: data.myBooking.speakingSlotId, skillsId: data.myBooking.skillsSlotId });
-              }
-              setScreen('step2');
-            }}
-            onCancelled={(newState) => {
-              pushToast('success', 'Đã hủy đăng ký.');
-              setData(newState);
-              // Keep the student's identity (mã NV / tên / BU) pre-filled — only the
-              // booking was cancelled, not who they are. Resetting it forced a re-type
-              // on the auto-returned Step 1. Only the slot selection is cleared.
-              setSelection({ speakingId: null, skillsId: null });
-              setIsEditing(false);
-              setScreen('step1');
-            }}
-            onError={(msg) => pushToast('error', msg)}
-          />
-        </main>
-      </div>
-    );
-  }
-
-  return null;
 }

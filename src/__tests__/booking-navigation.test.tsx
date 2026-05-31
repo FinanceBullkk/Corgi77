@@ -57,8 +57,9 @@ const BOOKED: InitResult = {
   deadline: null,
   deadlinePassed: false,
   allowEnrollment: true,
-  serverNow: new Date().toISOString(),
+  clientNow: new Date().toISOString(),
   maxChanges: 3,
+  buList: ['BSG', 'CHORUS', 'LBU', 'MOC', 'ONC', 'POC', 'TBU'],
 };
 
 const FRESH: InitResult = { ...BOOKED, myBooking: null };

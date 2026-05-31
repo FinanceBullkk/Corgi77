@@ -19,7 +19,7 @@ interface AuditView {
 
 function buildAuditView(l: AuditEntry, slotMap: Map<string, Slot>): AuditView {
   const d = l.detail as Record<string, any>;
-  const sl = (id: any) => slotLabel(slotMap, typeof id === 'string' ? id : null);
+  const sl = (id: unknown) => slotLabel(slotMap, typeof id === 'string' ? id : null);
   switch (l.event) {
     case 'book.create':
       return {

@@ -38,8 +38,9 @@ export interface InitResult {
   deadline: string | null;
   deadlinePassed: boolean;
   allowEnrollment: boolean;
-  serverNow: string;
+  clientNow: string;
   maxChanges: number;
+  buList: string[];
 }
 
 export interface BookPayload {

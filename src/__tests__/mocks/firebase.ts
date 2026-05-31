@@ -79,6 +79,8 @@ export const TEST_CONFIG = {
   deadline: null,
   emailConfirm: false,
   adminEmails: ['admin@test.com'],
+  buList: ['BSG', 'CHORUS', 'LBU', 'MOC', 'ONC', 'POC', 'TBU'],
+  assessmentName: 'Assessment Q2 2026',
 };
 
 export const TEST_REGISTRATION = {

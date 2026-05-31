@@ -83,10 +83,33 @@ function escHtmlLocal(s: string): string {
     .replace(/'/g, apos);
 }
 
+function setupGetDocByPath(records: Record<string, false | Record<string, unknown>>) {
+  mockGetDoc.mockImplementation((ref: { path: string }) => {
+    const value = records[ref.path];
+    if (value === undefined || value === false) return Promise.resolve(mockDocSnap(false));
+    return Promise.resolve(mockDocSnap(true, value));
+  });
+}
+
+function setupTxGetByPath(records: Record<string, false | Record<string, unknown>>) {
+  mockRunTransaction.mockImplementation(async (fn: any) => {
+    const txGet = vi.fn((ref: { path: string }) => {
+      const value = records[ref.path];
+      if (value === undefined || value === false) return Promise.resolve(mockDocSnap(false));
+      return Promise.resolve(mockDocSnap(true, value));
+    });
+    await fn({ get: txGet, set: vi.fn(), update: mockUpdateDoc, delete: mockDeleteDoc });
+  });
+}
+
 function setupPreflight() {
-  mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-  mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
-  mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+  setupGetDocByPath({
+    'ineligibility/262010': false,
+    'config/main': TEST_CONFIG,
+    'empCodeClaims/262010': false,
+    'registrations/attacker@test.com': false,
+    'registrations/user@test.com': false,
+  });
 }
 
 beforeEach(() => {
@@ -131,17 +154,7 @@ describe('SEC: XSS & Injection Attacks', () => {
       Object.assign(new Error('Ca Speaking không hợp lệ.'), { code: 'functions/failed-precondition' }),
     ));
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // __proto__ slot doesn't exist
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const result = await bookDb('attacker@test.com', {
       empCode: '262010',
@@ -188,17 +201,7 @@ describe('SEC: XSS & Injection Attacks', () => {
       Object.assign(new Error('Ca Speaking không hợp lệ.'), { code: 'functions/failed-precondition' }),
     ));
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // slot with null byte doesn't exist
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const result = await bookDb('attacker@test.com', {
       empCode: '262010',
@@ -220,7 +223,7 @@ describe('SEC: Privilege Escalation', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('SEC-08: Non-admin calls adminCreateSlot() -> audit trail records attacker email', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+    setupGetDocByPath({ 'slots/SP-2206-0900': false });
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
     mockSetDoc.mockResolvedValueOnce(undefined);
 
@@ -240,12 +243,10 @@ describe('SEC: Privilege Escalation', () => {
   });
 
   it('SEC-09: Non-admin deletes registration -> audit trail created', async () => {
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_REGISTRATION));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 8 }));
-      await fn({ get: txGet, set: vi.fn(), update: mockUpdateDoc, delete: mockDeleteDoc });
+    setupTxGetByPath({
+      'registrations/victim@test.com': TEST_REGISTRATION,
+      [`slots/${TEST_REGISTRATION.speakingSlotId}`]: { remaining: 5 },
+      [`slots/${TEST_REGISTRATION.skillsSlotId}`]: { remaining: 8 },
     });
 
     await adminDeleteRegistration('hacker@evil.com', 'victim@test.com');
@@ -274,20 +275,7 @@ describe('SEC: Privilege Escalation', () => {
     const callable = vi.fn().mockResolvedValue({ data: {} });
     mockHttpsCallable.mockReturnValueOnce(callable);
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      // Correct read order: config, registration, cancelledQuota, speaking, skills
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no existing registration
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no saved quota
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     // The client does NOT verify email ownership — it writes the registration keyed
     // by the email argument. The Firestore rule `auth.token.email == email` is the
@@ -301,7 +289,7 @@ describe('SEC: Privilege Escalation', () => {
   });
 
   it('SEC-12: Admin email homograph / case attacks -> rejected', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { adminEmails: ['admin@cyberlogitec.com'] }));
+    setupGetDocByPath({ 'config/main': { adminEmails: ['admin@cyberlogitec.com'] } });
     await fetchAdminEmails();
 
     expect(isAdmin('ADMIN@CYBERLOGITEC.COM')).toBe(true);
@@ -324,18 +312,11 @@ describe('SEC: IDOR & Parameter Tampering', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('SEC-13: Attacker cancels victim registration -> Firestore rule blocks', async () => {
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_REGISTRATION));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 8 }));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+    setupGetDocByPath({
+      'config/main': TEST_CONFIG,
+      'registrations/victim@company.com': false,
     });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     await cancelDb('victim@company.com');
     // Document: client may succeed, server blocks via auth.token.email rule
@@ -347,22 +328,7 @@ describe('SEC: IDOR & Parameter Tampering', () => {
       Object.assign(new Error('Ca Speaking không hợp lệ.'), { code: 'functions/failed-precondition' }),
     ));
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, {
-        type: '3 Skills', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5,
-      }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, {
-        type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5,
-      }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
@@ -377,23 +343,18 @@ describe('SEC: IDOR & Parameter Tampering', () => {
     mockHttpsCallable.mockReturnValueOnce(vi.fn().mockRejectedValue(
       Object.assign(new Error('Bạn chưa có đăng ký nào để hủy.'), { code: 'functions/failed-precondition' }),
     ));
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // already deleted
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
 
     const result = await cancelDb('user@test.com');
     expect(result.ok).toBe(false);
     expect(result.error).toContain('chưa có đăng ký');
   });
 
-  it('SEC-16: Negative remaining injection via updateSlot() -> Firestore rule blocks', async () => {
+  it('SEC-16: Negative remaining injection via updateSlot() -> client guard blocks', async () => {
     mockUpdateDoc.mockResolvedValueOnce(undefined);
-    await updateSlot('admin@test.com', 'SP-2206-0900', { remaining: -100 });
-    expect(mockUpdateDoc).toHaveBeenCalled();
-    // In production, Firestore rejects: remaining >= 0 rule
+    await expect(updateSlot('admin@test.com', 'SP-2206-0900', { remaining: -100 }))
+      .rejects.toThrow('remaining không được âm');
+    expect(mockUpdateDoc).not.toHaveBeenCalled();
+    // Firestore rules remain the final defense for direct writes.
   });
 
   it('SEC-17: Capacity=0 to block all bookings -> Firestore rule blocks', async () => {
@@ -415,18 +376,7 @@ describe('SEC: Boundary Abuse', () => {
     const longName = 'A'.repeat(100_000);
     setupPreflight();
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     await bookDb('user@test.com', {
       empCode: '262010', fullName: longName, bu: 'IT',
@@ -438,18 +388,7 @@ describe('SEC: Boundary Abuse', () => {
   it('SEC-19: empCode with leading/trailing spaces -> trimmed correctly', async () => {
     setupPreflight();
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     await bookDb('user@test.com', {
       empCode: ' 262010 ',
@@ -463,24 +402,7 @@ describe('SEC: Boundary Abuse', () => {
   it('SEC-20: Negative changeCount in registration -> clamped to 0 (FIXED)', async () => {
     setupPreflight();
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      // bookDb read order: config, registration, cancelledQuota, speaking, skills, oldSpeaking, oldSkills
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, maxChanges: 3 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, {
-        ...TEST_REGISTRATION, changeCount: -999, speakingSlotId: 'SP-OLD', skillsSlotId: '3S-OLD',
-      }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no saved quota
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 })); // old speaking slot
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 })); // old skills slot
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_REGISTRATION, changeCount: -998 }));
 
     // FIX: Math.max(0, -999) + 1 = 1, which is <= maxChanges=3 -> booking succeeds
     // The negative value is clamped to 0 before incrementing
@@ -495,20 +417,7 @@ describe('SEC: Boundary Abuse', () => {
   it('SEC-21: Two slots identical time but different dates -> no overlap', async () => {
     setupPreflight();
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      // bookDb read order: config, registration, cancelledQuota, speaking, skills
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no existing registration
-      txGet.mockResolvedValueOnce(mockDocSnap(false)); // no saved quota
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-23', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_REGISTRATION));
 
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
@@ -560,22 +469,8 @@ describe('SEC: Deadline & Clock Manipulation', () => {
   });
 
   it('SEC-26: Deadline in config set to null -> enrollment remains open', async () => {
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      // batch 1: config, registration, cancelledQuota
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, deadline: null, allowEnrollment: true }));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      // batch 2: slots
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 10, remaining: 5 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 10, remaining: 5 }));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
     setupPreflight();
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, deadline: null }));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
@@ -590,15 +485,13 @@ describe('SEC: Deadline & Clock Manipulation', () => {
       Object.assign(new Error('Đăng ký hiện đang bị khoá.'), { code: 'functions/failed-precondition' }),
     ));
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, allowEnrollment: false, deadline: null }));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
+    setupGetDocByPath({
+      'ineligibility/262010': false,
+      'config/main': { ...TEST_CONFIG, allowEnrollment: false },
+      'empCodeClaims/262010': false,
+      'registrations/user@test.com': false,
     });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { ...TEST_CONFIG, allowEnrollment: false }));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
@@ -715,21 +608,7 @@ describe('SEC: DoS Vectors', () => {
   it('SEC-37: Rapid-fire booking calls (rate limiting)', async () => {
     setupPreflight();
 
-    mockRunTransaction.mockImplementation(async (fn: any) => {
-      const txGet = vi.fn();
-      // batch 1: config, registration, cancelledQuota
-      txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      txGet.mockResolvedValueOnce(mockDocSnap(false));
-      // batch 2: slots
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: 'Speaking', date: '2026-06-22', startMin: 540, endMin: 600, capacity: 100, remaining: 50 }));
-      txGet.mockResolvedValueOnce(mockDocSnap(true, { type: '3 Skills', date: '2026-06-22', startMin: 660, endMin: 720, capacity: 100, remaining: 50 }));
-      await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
-    });
-
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const promises = Array.from({ length: 10 }, () =>
       bookDb('user@test.com', {
@@ -745,7 +624,10 @@ describe('SEC: DoS Vectors', () => {
   });
 
   it('SEC-38: Extremely large slot list -> initDb handles gracefully', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
+    setupGetDocByPath({
+      'config/main': TEST_CONFIG,
+      'registrations/user@test.com': false,
+    });
     const manySlots = Array.from({ length: 1000 }, (_, i) => ({
       id: `SP-${i}`,
       data: () => ({
@@ -758,7 +640,6 @@ describe('SEC: DoS Vectors', () => {
       }),
     }));
     mockGetDocs.mockResolvedValueOnce(mockQuerySnap(manySlots));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
 
     const result = await initDb('user@test.com');
     expect(result.slots).toHaveLength(1000);

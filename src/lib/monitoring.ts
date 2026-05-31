@@ -28,9 +28,10 @@ export function captureError(
       tags: context?.operation ? { operation: context.operation } : undefined,
       extra: context?.extra,
     });
+  } else {
+    // Keep console.warn as local fallback (useful in dev / when DSN not set).
+    console.warn(`[${context?.operation ?? 'error'}]`, error);
   }
-  // Always keep console.warn as local fallback (useful in dev / when DSN not set)
-  console.warn(`[${context?.operation ?? 'error'}]`, error);
 }
 
 /**

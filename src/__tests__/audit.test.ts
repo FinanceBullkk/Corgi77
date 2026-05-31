@@ -7,6 +7,7 @@ vi.mock('../lib/firebase', () => ({
 
 const mockAddDoc = vi.fn();
 const mockGetDocs = vi.fn();
+const mockCaptureError = vi.fn();
 vi.mock('firebase/firestore', () => ({
   addDoc: (...args: any[]) => mockAddDoc(...args),
   collection: vi.fn((_db: any, path: string) => ({ path })),
@@ -18,6 +19,9 @@ vi.mock('firebase/firestore', () => ({
   Timestamp: {
     fromDate: (d: Date) => ({ toDate: () => d }),
   },
+}));
+vi.mock('../lib/monitoring', () => ({
+  captureError: (...args: any[]) => mockCaptureError(...args),
 }));
 
 import { auditLog, listAuditLogs, type AuditEvent } from '../lib/audit';
@@ -51,10 +55,10 @@ describe('auditLog()', () => {
   });
 
   it('UC-D03: does not throw when Firestore write fails (non-blocking)', async () => {
-    mockAddDoc.mockRejectedValueOnce(new Error('Network error'));
-    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = new Error('Network error');
+    mockAddDoc.mockRejectedValueOnce(err);
     await expect(auditLog('user@test.com', 'book.cancel')).resolves.toBeUndefined();
-    consoleSpy.mockRestore();
+    expect(mockCaptureError).toHaveBeenCalledWith(err, { operation: 'auditLog' });
   });
 
   it('UC-D04: supports all defined AuditEvent types', async () => {

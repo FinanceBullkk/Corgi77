@@ -78,11 +78,33 @@ const TEST_SLOT_SKILLS = {
   session: 'afternoon',
 };
 
+type DocMockValue = false | Record<string, unknown>;
+
+function setupGetDocByPath(records: Record<string, DocMockValue>, rejectPaths: Record<string, Error> = {}) {
+  mockGetDoc.mockImplementation((ref: { path: string }) => {
+    const err = rejectPaths[ref.path];
+    if (err) return Promise.reject(err);
+    const value = records[ref.path];
+    if (value === undefined || value === false) return Promise.resolve(mockDocSnap(false));
+    return Promise.resolve(mockDocSnap(true, value));
+  });
+}
+
+function setupGetDocsByPath(records: Record<string, Array<{ id: string; data: () => Record<string, unknown> }>>) {
+  mockGetDocs.mockImplementation((refOrQuery: { path?: string } | Array<{ path?: string }>) => {
+    const path = Array.isArray(refOrQuery) ? refOrQuery[0]?.path : refOrQuery.path;
+    return Promise.resolve(mockQuerySnap(records[path ?? ''] ?? []));
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // UC-DB01 -> UC-DB08: checkIneligibility()
 // ═══════════════════════════════════════════════════════════════════════════
 describe('checkIneligibility()', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDoc.mockReset();
+  });
 
   it('UC-DB01: returns null for empty empCode', async () => {
     const result = await checkIneligibility('');
@@ -90,64 +112,70 @@ describe('checkIneligibility()', () => {
   });
 
   it('UC-DB02: returns reason when empCode is in ineligibility blocklist', async () => {
-    // 1st getDoc: ineligibility doc exists
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { reason: 'Chưa đủ 12 tháng' }));
+    setupGetDocByPath({
+      'ineligibility/262010': { reason: 'Chưa đủ 12 tháng' },
+    });
     const result = await checkIneligibility('262010');
     expect(result).toBe('Chưa đủ 12 tháng');
   });
 
   it('UC-DB03: returns default message when blocklist entry has no reason', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
+    setupGetDocByPath({ 'ineligibility/262010': {} });
     const result = await checkIneligibility('262010');
     expect(result).toContain('đủ điều kiện');
   });
 
   it('UC-DB04: returns null when not blocked and eligibility not required', async () => {
-    // 1st getDoc: not in ineligibility
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    // 2nd getDoc: config — no requireEligibility
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
+    setupGetDocByPath({
+      'ineligibility/262010': false,
+      'config/main': {},
+    });
     const result = await checkIneligibility('262010');
     expect(result).toBeNull();
   });
 
   it('UC-DB05: returns reason when eligibility required but empCode not in allowlist', async () => {
-    // 1st getDoc: not in ineligibility
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    // 2nd getDoc: config with requireEligibility=true
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { requireEligibility: true }));
-    // 3rd getDoc: eligibility doc doesn't exist
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+    setupGetDocByPath({
+      'ineligibility/262010': false,
+      'config/main': { requireEligibility: true },
+      'eligibility/262010': false,
+    });
     const result = await checkIneligibility('262010');
     expect(result).toContain('danh sách');
   });
 
   it('UC-DB06: returns null when eligibility required and empCode is in allowlist', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { requireEligibility: true }));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
+    setupGetDocByPath({
+      'ineligibility/262010': false,
+      'config/main': { requireEligibility: true },
+      'eligibility/262010': {},
+    });
     const result = await checkIneligibility('262010');
     expect(result).toBeNull();
   });
 
   it('UC-DB06B: returns reason when empCode is claimed by another email', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { email: 'other@test.com' }));
+    setupGetDocByPath({
+      'ineligibility/262010': false,
+      'config/main': {},
+      'empCodeClaims/262010': { email: 'other@test.com' },
+    });
     const result = await checkIneligibility('262010', 'user@test.com');
     expect(result).toContain('email khác');
   });
 
   it('UC-DB06C: returns null when empCode claim belongs to same email', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { email: 'user@test.com' }));
+    setupGetDocByPath({
+      'ineligibility/262010': false,
+      'config/main': {},
+      'empCodeClaims/262010': { email: 'user@test.com' },
+    });
     const result = await checkIneligibility('262010', 'user@test.com');
     expect(result).toBeNull();
   });
 
   it('UC-DB07: throws when Firestore read fails (callers handle non-blocking behavior)', async () => {
-    mockGetDoc.mockRejectedValueOnce(new Error('Network error'));
+    setupGetDocByPath({}, { 'ineligibility/262010': new Error('Network error') });
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(checkIneligibility('262010')).rejects.toThrow('Network error');
     consoleSpy.mockRestore();
@@ -158,18 +186,23 @@ describe('checkIneligibility()', () => {
 // UC-DB08 -> UC-DB10: initDb()
 // ═══════════════════════════════════════════════════════════════════════════
 describe('initDb()', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDoc.mockReset();
+    mockGetDocs.mockReset();
+  });
 
   it('UC-DB08: returns full InitResult with config, slots, and booking', async () => {
-    // 1. getConfig -> getDoc(config/main)
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    // 2. getDocs(slots) -> 2 slots
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([
-      { id: 'SP-2206-0900', data: () => TEST_SLOT_SPEAKING },
-      { id: '3S-2206-1100', data: () => TEST_SLOT_SKILLS },
-    ]));
-    // 3. getDoc(registrations/email)
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_REGISTRATION));
+    setupGetDocByPath({
+      'config/main': TEST_CONFIG,
+      'registrations/user@test.com': TEST_REGISTRATION,
+    });
+    setupGetDocsByPath({
+      slots: [
+        { id: 'SP-2206-0900', data: () => TEST_SLOT_SPEAKING },
+        { id: '3S-2206-1100', data: () => TEST_SLOT_SKILLS },
+      ],
+    });
 
     const result = await initDb('user@test.com');
     expect(result.email).toBe('user@test.com');
@@ -179,22 +212,28 @@ describe('initDb()', () => {
   });
 
   it('UC-DB09: returns myBooking=null when user has no registration', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+    setupGetDocByPath({
+      'config/main': TEST_CONFIG,
+      'registrations/user@test.com': false,
+    });
+    setupGetDocsByPath({ slots: [] });
 
     const result = await initDb('user@test.com');
     expect(result.myBooking).toBeNull();
   });
 
   it('UC-DB10: sorts slots by date then startMin', async () => {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {}));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([
-      { id: 'late', data: () => ({ ...TEST_SLOT_SPEAKING, date: '2026-06-23', startMin: 600 }) },
-      { id: 'early', data: () => ({ ...TEST_SLOT_SPEAKING, date: '2026-06-22', startMin: 540 }) },
-      { id: 'mid', data: () => ({ ...TEST_SLOT_SPEAKING, date: '2026-06-22', startMin: 660 }) },
-    ]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+    setupGetDocByPath({
+      'config/main': {},
+      'registrations/user@test.com': false,
+    });
+    setupGetDocsByPath({
+      slots: [
+        { id: 'late', data: () => ({ ...TEST_SLOT_SPEAKING, date: '2026-06-23', startMin: 600 }) },
+        { id: 'early', data: () => ({ ...TEST_SLOT_SPEAKING, date: '2026-06-22', startMin: 540 }) },
+        { id: 'mid', data: () => ({ ...TEST_SLOT_SPEAKING, date: '2026-06-22', startMin: 660 }) },
+      ],
+    });
 
     const result = await initDb('user@test.com');
     expect(result.slots[0].date).toBe('2026-06-22');
@@ -209,7 +248,10 @@ describe('initDb()', () => {
 // UC-DB11 -> UC-DB14: bookDb() — Validation & pre-flight
 // ═══════════════════════════════════════════════════════════════════════════
 describe('bookDb() — validation', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDoc.mockReset();
+  });
 
   it('UC-DB11: rejects when empCode is empty', async () => {
     const result = await bookDb('user@test.com', {
@@ -239,8 +281,9 @@ describe('bookDb() — validation', () => {
   });
 
   it('UC-DB14: rejects when blocked by ineligibility', async () => {
-    // checkIneligibility -> getDoc(ineligibility/262010) returns blocked
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, { reason: 'Chưa đủ 12 tháng' }));
+    setupGetDocByPath({
+      'ineligibility/262010': { reason: 'Chưa đủ 12 tháng' },
+    });
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
       speakingSlotId: 'sp1', skillsSlotId: 'sk1',
@@ -259,15 +302,16 @@ describe('bookDb()/cancelDb() — callable functions', () => {
   });
 
   function setupAllowedPreflight() {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // ineligibility
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, {})); // config requireEligibility off
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false)); // empCodeClaims
+    setupGetDocByPath({
+      'ineligibility/262010': false,
+      'config/main': TEST_CONFIG,
+      'empCodeClaims/262010': false,
+      'registrations/user@test.com': false,
+    });
   }
 
   function setupInitAfterCall() {
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(true, TEST_CONFIG));
-    mockGetDocs.mockResolvedValueOnce(mockQuerySnap([]));
-    mockGetDoc.mockResolvedValueOnce(mockDocSnap(false));
+    setupGetDocsByPath({ slots: [] });
   }
 
   it('UC-DB15: bookDb calls bookRegistration and returns refreshed state', async () => {
@@ -331,4 +375,3 @@ describe('bookDb()/cancelDb() — callable functions', () => {
     expect(result.error).toContain('chưa có đăng ký');
   });
 });
-

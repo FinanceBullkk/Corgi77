@@ -13,54 +13,6 @@ service cloud.firestore {
              get(/databases/$(database)/documents/config/main).data.get('adminEmails', []);
     }
 
-    // Server-side enrollment-open check (deadline + allowEnrollment).
-    // Uses request.time (server timestamp) so users cannot bypass by clock change.
-    function isEnrollmentOpen() {
-      return !exists(/databases/$(database)/documents/config/main)
-        || isEnrollmentOpenInner();
-    }
-    function isEnrollmentOpenInner() {
-      let cfg = get(/databases/$(database)/documents/config/main).data;
-      let allowEnroll = cfg.get('allowEnrollment', true);
-      let deadline = cfg.get('deadline', null);
-      return allowEnroll != false
-        && (deadline == null || request.time < deadline);
-    }
-
-    // Block-list check: if /ineligibility/{empCode} exists, the user
-    // with that empCode is denied from creating/updating their registration.
-    // The empCode comes from the registration payload (request.resource.data),
-    // not from the auth token (Firestore doesn't know each user's empCode).
-    // Empty /ineligibility collection = nobody blocked (default).
-    function isNotBlocked() {
-      return request.resource.data.empCode is string
-        && !exists(/databases/$(database)/documents/ineligibility/$(request.resource.data.empCode));
-    }
-
-    // EmpCode uniqueness lock. The app writes /empCodeClaims/{empCode}
-    // in the same transaction as /registrations/{email}; getAfter() validates
-    // the post-commit owner so a registration cannot bypass the claim doc.
-    function hasOwnEmpCodeClaim() {
-      return request.resource.data.empCode is string
-        && getAfter(/databases/$(database)/documents/empCodeClaims/$(request.resource.data.empCode)).data.email
-           == request.auth.token.email;
-    }
-
-    function validOwnEmpCodeClaim(empCode) {
-      return request.resource.data.keys().hasOnly(['email'])
-        && request.resource.data.email is string
-        && request.resource.data.email == request.auth.token.email
-        && empCode.matches('^[0-9]{6}$');
-    }
-
-    function validClaimForExistingRegistration(empCode) {
-      return request.resource.data.keys().hasOnly(['email'])
-        && request.resource.data.email is string
-        && empCode.matches('^[0-9]{6}$')
-        && exists(/databases/$(database)/documents/registrations/$(request.resource.data.email))
-        && get(/databases/$(database)/documents/registrations/$(request.resource.data.email)).data.empCode == empCode;
-    }
-
     // Validation for new slot (admin create).
     function validNewSlot() {
       return request.resource.data.type in ['Speaking', '3 Skills']
@@ -109,7 +61,7 @@ service cloud.firestore {
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.event is string
         && request.resource.data.event.matches(
-          '^admin\\.(deleteRegistration|updateSlot|createSlot|deleteSlot|updateConfig|upsertIneligibility|deleteIneligibility|backfillEmpCodeClaims)$'
+          '^admin\\.(deleteRegistration|updateSlot|createSlot|deleteSlot|updateConfig|upsertIneligibility|deleteIneligibility|backfillEmpCodeClaims|cleanupRegistrationEmailFields|cleanupFunctionRateLimits)$'
         )
         && request.resource.data.detail is map;
     }
@@ -210,6 +162,13 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if false;
       allow update, delete: if false;
+    }
+
+    // ─── Function Rate Limits (Cloud Functions only via Admin SDK) ────────
+    // Written and read exclusively by Cloud Functions (Admin SDK bypasses rules).
+    // Explicit deny prevents accidental exposure if a catch-all rule is added later.
+    match /functionRateLimits/{id} {
+      allow read, write: if false;
     }
   }
 }

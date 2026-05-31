@@ -16,10 +16,6 @@ export interface DeadlineInfo {
 
 export type SlotSt = 'sel' | 'full' | 'conflict' | 'ok';
 
-// ─── Constants ──────────────────────────────────────────────────────────────
-
-export const BU_LIST = ['BSG', 'CHORUS', 'LBU', 'MOC', 'ONC', 'POC', 'TBU'];
-
 // px per hour row · MUST match --row-h in .cal (styles.css)
 export const ROW_H = 64;
 
@@ -35,7 +31,7 @@ export function emailShortName(email: string): string {
 
 export function computeDeadline(
   deadline: string | null,
-  _serverNow: string,
+  _clientNow: string,
   deadlinePassed: boolean,
   skew: number,
 ): DeadlineInfo | null {

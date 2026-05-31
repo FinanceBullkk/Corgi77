@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type DocData = Record<string, any>;
+const realRequire = createRequire(import.meta.url);
 
 class FakeHttpsError extends Error {
   code: string;
@@ -31,6 +33,20 @@ class FakeDocRef {
 
   async set(data: DocData) {
     this.store.set(this.path, { ...data });
+  }
+
+  async update(data: DocData) {
+    const current = this.store.get(this.path) || {};
+    const next = { ...current };
+    for (const [key, value] of Object.entries(data)) {
+      if (value === 'FIELD_DELETE') delete next[key];
+      else next[key] = value;
+    }
+    this.store.set(this.path, next);
+  }
+
+  async delete() {
+    this.store.delete(this.path);
   }
 }
 
@@ -66,6 +82,14 @@ class FakeDb {
           forEach: (fn: (doc: { id: string; data: () => DocData }) => void) => docs.forEach(fn),
         };
       },
+    };
+  }
+
+  batch() {
+    const ops: Array<() => void> = [];
+    return {
+      update: (ref: FakeDocRef, data: DocData) => { ops.push(() => { const next = { ...(this.store.get(ref.path) || {}) }; for (const [k, v] of Object.entries(data)) { if (v === 'FIELD_DELETE') delete next[k]; else next[k] = v; } this.store.set(ref.path, next); }); },
+      commit: async () => { ops.forEach((op) => op()); ops.length = 0; },
     };
   }
 
@@ -115,7 +139,7 @@ function basePayload(overrides: DocData = {}) {
   return {
     empCode: '262010',
     fullName: 'Nguyen Van A',
-    bu: 'IT',
+    bu: 'BSG',
     speakingSlotId: 'SP-2206-0900',
     skillsSlotId: '3S-2206-1100',
     ...overrides,
@@ -163,7 +187,7 @@ function loadFunctions(db: FakeDb) {
   const code = readFileSync(join(process.cwd(), 'functions/index.js'), 'utf8');
   const fakeRequire = (id: string) => {
     if (id === 'firebase-functions/v2/https') {
-      return { onCall: (handler: any) => handler, HttpsError: FakeHttpsError };
+      return { onCall: (optionsOrHandler: any, maybeHandler?: any) => maybeHandler ?? optionsOrHandler, HttpsError: FakeHttpsError };
     }
     if (id === 'firebase-functions/v2/scheduler') {
       return { onSchedule: (_schedule: string, handler: any) => handler };
@@ -174,8 +198,15 @@ function loadFunctions(db: FakeDb) {
     if (id === 'firebase-admin/firestore') {
       return {
         getFirestore: () => db,
-        Timestamp: { now: () => ts('2026-05-30T00:00:00.000Z') },
+        FieldValue: { delete: () => 'FIELD_DELETE' },
+        Timestamp: {
+          now: () => ts('2026-05-30T00:00:00.000Z'),
+          fromMillis: (ms: number) => ts(new Date(ms).toISOString()),
+        },
       };
+    }
+    if (id === './booking-handlers' || id === './cancel-handler' || id === './email-helpers' || id === './format-helpers' || id === './maintenance' || id === './repair-claims') {
+      return realRequire(join(process.cwd(), 'functions', `${id.slice(2)}.js`));
     }
     throw new Error(`Unexpected require: ${id}`);
   };
@@ -219,6 +250,19 @@ describe('Cloud Functions booking handlers', () => {
     });
   });
 
+  it('rejects BU outside the default list when config buList is empty', async () => {
+    seedOpenConfig(db, { buList: [] });
+    seedSlots(db);
+
+    await expect(fns.bookRegistration({
+      ...signed('outsider@test.com'),
+      data: basePayload({ bu: 'IT' }),
+    })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'BU không hợp lệ.',
+    });
+  });
+
   it('creates a new booking, claim, slot decrements and audit log', async () => {
     seedOpenConfig(db);
     seedSlots(db);
@@ -226,13 +270,14 @@ describe('Cloud Functions booking handlers', () => {
     const result = await fns.bookRegistration({ ...signed(), data: basePayload() });
 
     expect(result).toEqual({ ok: true, emailSent: false });
-    expect(db.store.get('registrations/user@test.com')).toMatchObject({
-      email: 'user@test.com',
+    const savedRegistration = db.store.get('registrations/user@test.com');
+    expect(savedRegistration).toMatchObject({
       empCode: '262010',
       speakingSlotId: 'SP-2206-0900',
       skillsSlotId: '3S-2206-1100',
       changeCount: 0,
     });
+    expect(savedRegistration).not.toHaveProperty('email');
     expect(db.store.get('empCodeClaims/262010')).toEqual({ email: 'user@test.com' });
     expect(db.store.get('slots/SP-2206-0900')?.remaining).toBe(7);
     expect(db.store.get('slots/3S-2206-1100')?.remaining).toBe(6);
@@ -282,7 +327,7 @@ describe('Cloud Functions booking handlers', () => {
       email: 'user@test.com',
       empCode: '262009',
       fullName: 'Old Name',
-      bu: 'IT',
+      bu: 'BSG',
       speakingSlotId: 'SP-2306-0900',
       skillsSlotId: '3S-2306-1100',
       createdAt: ts('2026-05-01T00:00:00.000Z'),
@@ -376,6 +421,25 @@ describe('Cloud Functions booking handlers', () => {
     expect(db.store.get('slots/SP-2206-0900')?.remaining).toBe(9);
   });
 
+  it('rate limits rapid cancellation attempts', async () => {
+    seedOpenConfig(db);
+    seedSlots(db);
+    db.store.set('registrations/user@test.com', {
+      empCode: '262010',
+      speakingSlotId: 'SP-2206-0900',
+      skillsSlotId: '3S-2206-1100',
+      changeCount: 2,
+    });
+    db.store.set('functionRateLimits/cancelRegistration_user@test_com', {
+      lastCallAt: ts(new Date().toISOString()),
+    });
+
+    await expect(fns.cancelRegistration(signed())).rejects.toMatchObject({
+      code: 'resource-exhausted',
+      message: expect.stringContaining('thao tác quá nhanh'),
+    });
+  });
+
   it('repairs empCode claims and reports duplicates/conflicts', async () => {
     seedOpenConfig(db, { adminEmails: ['admin@test.com'] });
     db.store.set('registrations/a@test.com', { empCode: '262001' });
@@ -393,5 +457,33 @@ describe('Cloud Functions booking handlers', () => {
     ]);
     expect(db.store.get('empCodeClaims/262001')).toEqual({ email: 'a@test.com' });
     expect(db.collectionAdds.find((c) => c.path === 'auditLogs')?.data.event).toBe('admin.backfillEmpCodeClaims');
+  });
+
+  it('cleans redundant email fields from registration documents', async () => {
+    seedOpenConfig(db, { adminEmails: ['admin@test.com'] });
+    db.store.set('registrations/user@test.com', { email: 'user@test.com', empCode: '262010' });
+    db.store.set('registrations/clean@test.com', { empCode: '262011' });
+
+    const result = await fns.cleanupRegistrationEmailFieldsNow(signed('admin@test.com'));
+
+    expect(result).toEqual({ scanned: 2, cleaned: 1 });
+    expect(db.store.get('registrations/user@test.com')).toEqual({ empCode: '262010' });
+    expect(db.store.get('registrations/clean@test.com')).toEqual({ empCode: '262011' });
+    expect(db.collectionAdds.find((c) => c.path === 'auditLogs')?.data.event)
+      .toBe('admin.cleanupRegistrationEmailFields');
+  });
+
+  it('scheduled cleanup deletes stale function rate-limit docs', async () => {
+    const oldTs = ts(new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString());
+    const freshTs = ts(new Date().toISOString());
+    db.store.set('functionRateLimits/bookRegistration_old@test_com', { lastCallAt: oldTs });
+    db.store.set('functionRateLimits/bookRegistration_new@test_com', { lastCallAt: freshTs });
+
+    await fns.scheduledCleanupFunctionRateLimits();
+
+    expect(db.store.has('functionRateLimits/bookRegistration_old@test_com')).toBe(false);
+    expect(db.store.has('functionRateLimits/bookRegistration_new@test_com')).toBe(true);
+    expect(db.collectionAdds.find((c) => c.path === 'auditLogs')?.data.event)
+      .toBe('admin.cleanupFunctionRateLimits');
   });
 });

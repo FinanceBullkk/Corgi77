@@ -8,29 +8,10 @@ import {
 import { db } from './firebase';
 import type { BookPayload, BookResult, CancelResult, InitResult, Slot } from './types';
 import { captureError, friendlyFirestoreError } from './monitoring';
+import { slotFromDoc } from './slot-helpers';
 
-// ── helpers ──────────────────────────────────────────────────────────────
-
-function minToHHmm(min: number) {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
-function slotFromDoc(id: string, data: Record<string, any>): Slot {
-  return {
-    slotId: id,
-    type: data.type,
-    date: data.date,
-    session: data.session ?? '',
-    startMin: data.startMin,
-    endMin: data.endMin,
-    capacity: data.capacity,
-    remaining: data.remaining ?? data.capacity,
-    location: data.location ?? '',
-    display: data.display ?? `${data.type} | ${data.date} | ${minToHHmm(data.startMin)}–${minToHHmm(data.endMin)}`,
-  };
-}
+const DEFAULT_MAX_CHANGES = 3; // Sync with functions/index.js DEFAULT_MAX_CHANGES.
+const DEFAULT_BU_LIST = ['BSG', 'CHORUS', 'LBU', 'MOC', 'ONC', 'POC', 'TBU'];
 
 interface ConfigData {
   deadline: string | null;
@@ -38,6 +19,7 @@ interface ConfigData {
   allowEnrollment: boolean;
   maxChanges: number;
   emailConfirm: boolean;
+  buList: string[];
 }
 
 async function getConfig(): Promise<ConfigData> {
@@ -53,8 +35,11 @@ async function getConfig(): Promise<ConfigData> {
     // — users cannot bypass by changing their system clock.
     deadlinePassed: deadline ? new Date() > new Date(deadline) : false,
     allowEnrollment: d.allowEnrollment !== false,
-    maxChanges: typeof d.maxChanges === 'number' ? d.maxChanges : 3,
+    maxChanges: typeof d.maxChanges === 'number' ? d.maxChanges : DEFAULT_MAX_CHANGES,
     emailConfirm: d.emailConfirm === true,
+    buList: Array.isArray(d.buList) && d.buList.length > 0
+      ? d.buList.map(String)
+      : DEFAULT_BU_LIST,
   };
 }
 
@@ -159,8 +144,9 @@ export async function initDb(email: string): Promise<InitResult> {
     deadline: cfg.deadline,
     deadlinePassed: cfg.deadlinePassed,
     allowEnrollment: cfg.allowEnrollment,
-    serverNow: new Date().toISOString(),
+    clientNow: new Date().toISOString(),
     maxChanges: cfg.maxChanges,
+    buList: cfg.buList,
   };
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Stepper } from './booking-chrome';
-import { BU_LIST, toUpperNoAccent, type Step1Data } from './booking-utils';
+import { toUpperNoAccent, type Step1Data } from './booking-utils';
 import { checkIneligibility } from '../lib/db';
 
 // ─── Step 1 · Info Form ───────────────────────────────────────────────────
@@ -8,11 +8,13 @@ import { checkIneligibility } from '../lib/db';
 export function Step1Form({
   email,
   initial,
+  buList,
   onContinue,
   onCancel,
 }: {
   email: string;
   initial: Step1Data;
+  buList: string[];
   onContinue: (d: Step1Data) => void;
   onCancel?: () => void;
 }) {
@@ -26,7 +28,7 @@ export function Step1Form({
 
   const empValid = /^\d{6}$/.test(empCode);
   const nameValid = fullName.trim().length >= 2;
-  const buValid = BU_LIST.includes(bu);
+  const buValid = buList.includes(bu);
   const empAvailable = empValid && checkedEmpCode === empCode && !blockErr;
   const allValid = empAvailable && nameValid && buValid;
   const validCount = [empAvailable, nameValid, buValid].filter(Boolean).length;
@@ -149,7 +151,7 @@ export function Step1Form({
               onChange={(e) => setBu(e.target.value)}
             >
               <option value="">— Chọn BU —</option>
-              {BU_LIST.map((b) => <option key={b} value={b}>{b}</option>)}
+              {buList.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
           </div>
         </div>

@@ -64,6 +64,14 @@ import {
 } from '../lib/adminDb';
 import { mockDocSnap, mockQuerySnap, TEST_SLOT_SPEAKING, TEST_SLOT_SKILLS, TEST_REGISTRATION } from './mocks/firebase';
 
+function setupTxGetByPath(records: Record<string, false | Record<string, unknown>>) {
+  return vi.fn((ref: { path: string }) => {
+    const value = records[ref.path];
+    if (value === undefined || value === false) return Promise.resolve(mockDocSnap(false));
+    return Promise.resolve(mockDocSnap(true, value));
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // UC-AD01: listSlots() — Load all slots sorted by date+startMin
 // ═══════════════════════════════════════════════════════════════════════════
@@ -211,7 +219,7 @@ describe('adminDeleteSlot()', () => {
     mockRunTransaction.mockImplementationOnce(async (fn: any) => {
       const txDelete = vi.fn();
       await fn({
-        get: vi.fn().mockResolvedValueOnce(mockDocSnap(true, { capacity: 10, remaining: 10 })),
+        get: setupTxGetByPath({ 'slots/SP-2206-0900': { capacity: 10, remaining: 10 } }),
         delete: txDelete,
       });
       expect(txDelete).toHaveBeenCalledOnce();
@@ -239,7 +247,7 @@ describe('adminDeleteSlot()', () => {
       .mockResolvedValueOnce(mockQuerySnap([]));
     mockRunTransaction.mockImplementationOnce(async (fn: any) => {
       await fn({
-        get: vi.fn().mockResolvedValueOnce(mockDocSnap(true, { capacity: 10, remaining: 9 })),
+        get: setupTxGetByPath({ 'slots/SP-2206-0900': { capacity: 10, remaining: 9 } }),
         delete: vi.fn(),
       });
     });
@@ -321,14 +329,12 @@ describe('adminDeleteRegistration()', () => {
     const txUpdate = vi.fn();
     const txDelete = vi.fn();
 
-    // 1. tx.get(registrations/email) -> exists
-    txGet.mockResolvedValueOnce(mockDocSnap(true, TEST_REGISTRATION));
-    // 2. tx.get(slots/speakingSlotId) -> exists
-    txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 5 }));
-    // 3. tx.get(slots/skillsSlotId) -> exists
-    txGet.mockResolvedValueOnce(mockDocSnap(true, { remaining: 8 }));
-    // 4. tx.get(empCodeClaims/empCode) -> owned by target registration
-    txGet.mockResolvedValueOnce(mockDocSnap(true, { email: 'user@test.com' }));
+    txGet.mockImplementation(setupTxGetByPath({
+      'registrations/user@test.com': TEST_REGISTRATION,
+      'slots/SP-2206-0900': { remaining: 5 },
+      'slots/3S-2206-1100': { remaining: 8 },
+      'empCodeClaims/262010': { email: 'user@test.com' },
+    }));
 
     mockRunTransaction.mockImplementation(async (fn: any) => {
       await fn({ get: txGet, set: vi.fn(), update: txUpdate, delete: txDelete });
@@ -342,8 +348,7 @@ describe('adminDeleteRegistration()', () => {
   });
 
   it('UC-AD18: throws when registration does not exist', async () => {
-    const txGet = vi.fn();
-    txGet.mockResolvedValueOnce(mockDocSnap(false));
+    const txGet = setupTxGetByPath({ 'registrations/nobody@test.com': false });
 
     mockRunTransaction.mockImplementation(async (fn: any) => {
       await fn({ get: txGet, set: vi.fn(), update: vi.fn(), delete: vi.fn() });
