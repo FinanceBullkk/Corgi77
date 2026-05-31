@@ -1,10 +1,8 @@
 import { useState } from 'react';
-import { SlotCard } from './slot-card';
-import { dayHeader, daysUntil, type Step1Data, type Selection } from './booking-utils';
-import { minToHHmm, type Slot } from '../lib/types';
+import { daysUntil, type Step1Data, type Selection } from './booking-utils';
+import { type Slot } from '../lib/types';
 import { addBookingToGoogleCalendar } from '../lib/google-calendar';
-
-// ─── Success Screen ───────────────────────────────────────────────────────
+import { SessionRow } from './session-row';
 
 export function SuccessScreen({
   email,
@@ -71,56 +69,53 @@ export function SuccessScreen({
         </p>
       </div>
 
-      {first && (
-        <div className="countdown">
-          <div className="meta">
-            <div className="lbl">Còn đến ca thi gần nhất</div>
-            <div className="when">
-              {first.type === 'Speaking' ? 'Speaking' : '3 Skills'} ·{' '}
-              {dayHeader(first.date).label} · {minToHHmm(first.startMin)}
-            </div>
-          </div>
-          <div className="big">
-            <div className="n">{countdown}</div>
-            <div className="u">ngày</div>
-          </div>
+      {emailSent && (
+        <div className="banner info mb-5" role="status" aria-live="polite">
+          <span className="banner-icon">✉</span>
+          <div>Email xác nhận đang được gửi đến <b>{email}</b>.</div>
         </div>
       )}
 
-      <div className="card">
-        <div className="card-hd">
-          <div className="card-title">Lịch thi của bạn</div>
-          {emailSent && (
-            <div className="card-sub">
-              Email xác nhận đang được gửi đến <b>{email}</b>.
-            </div>
-          )}
+      <div className="r-sessions">
+        <div className="r-sess-head">
+          <span className="t">Ca thi đã đăng ký</span>
+          <span className="c">· {ordered.length} ca</span>
         </div>
-        <div className="card-bd">
-          <div className="col" style={{ gap: 'var(--s-3)' }}>
-            {ordered.map((slot, i) => (
-              <SlotCard key={slot.slotId} slot={slot} index={i + 1} />
-            ))}
-          </div>
+        <div className="r-list">
+          {ordered.map((slot) => (
+            <SessionRow
+              key={slot.slotId}
+              slot={slot}
+              isNext={slot.slotId === first?.slotId}
+              countdown={countdown}
+            />
+          ))}
         </div>
-        <div className="card-ft">
-          <span>
-            Còn <b style={{ color: 'var(--ink-900)' }}>{changesLeft}/{maxChanges}</b> lần đổi ca
-          </span>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {sp && sk && (
-              <button
-                className="btn sm"
-                onClick={handleAddToGoogleCalendar}
-                disabled={calendarBusy}
-              >
-                {calendarBusy ? 'Đang thêm...' : 'Thêm vào Google Calendar'}
-              </button>
-            )}
-            <button className="btn ghost sm" onClick={onViewDetail}>
-              Quản lý đăng ký →
+      </div>
+
+      <div className="r-actions">
+        <span className="r-note">
+          Còn <b>{changesLeft}/{maxChanges}</b> lần đổi ca trước hạn
+        </span>
+        <div className="r-act-btns">
+          {sp && sk && (
+            <button
+              className="btn subtle"
+              onClick={handleAddToGoogleCalendar}
+              disabled={calendarBusy}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              {calendarBusy ? 'Đang thêm...' : 'Thêm vào Google Calendar'}
             </button>
-          </div>
+          )}
+          <button className="btn" onClick={onViewDetail}>
+            Quản lý đăng ký →
+          </button>
         </div>
       </div>
 
@@ -130,7 +125,6 @@ export function SuccessScreen({
           <div>{calendarStatus.text}</div>
         </div>
       )}
-
     </>
   );
 }

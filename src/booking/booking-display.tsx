@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { SlotCard } from './slot-card';
-import { dayHeader, daysUntil } from './booking-utils';
-import { minToHHmm, type Slot, type MyBooking, type InitResult } from '../lib/types';
+import { daysUntil } from './booking-utils';
+import { type Slot, type MyBooking, type InitResult } from '../lib/types';
 import { useConfirm } from '../confirm-toast-provider';
 import { cancelDb } from '../lib/db';
 import { addBookingToGoogleCalendar } from '../lib/google-calendar';
-
-// ─── Booking Display ──────────────────────────────────────────────────────
+import { DeletedSlotRow, SessionRow } from './session-row';
 
 export function BookingDisplay({
   email,
@@ -46,6 +44,7 @@ export function BookingDisplay({
   const first = ordered[0];
   const countdown = first ? daysUntil(first.date) : 0;
   const changesLeft = Math.max(0, maxChanges - booking.changeCount);
+  const canManage = !deadlinePassed && allowEnrollment;
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -103,105 +102,109 @@ export function BookingDisplay({
 
   return (
     <>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'baseline',
-          flexWrap: 'wrap',
-          gap: 8,
-          marginBottom: 'var(--s-4)',
-        }}
-      >
+      <div className="r-head">
         <div>
-          <h1 style={{ fontSize: 'var(--fs-xl)' }}>Lịch thi của bạn</h1>
-          <p className="text-sm text-muted" style={{ marginTop: 4 }}>
-            Xem thông tin đăng ký, đổi ca hoặc hủy đăng ký trước hạn.
-          </p>
+          <h1>Lịch thi của bạn</h1>
+          <p>Xem thông tin đăng ký, đổi ca hoặc hủy đăng ký trước hạn.</p>
         </div>
         <span className="pill success">✓ Đã đăng ký</span>
       </div>
 
-      {first && (
-        <div className="countdown mb-4">
-          <div className="meta">
-            <div className="lbl">Còn đến ca thi gần nhất</div>
-            <div className="when">
-              {first.type === 'Speaking' ? 'Speaking' : '3 Skills'} ·{' '}
-              {dayHeader(first.date).label} · {minToHHmm(first.startMin)}
-            </div>
+      <div className="r-id">
+        <span className="r-av">{email.split('@')[0].slice(0, 2).toUpperCase()}</span>
+        <div className="r-id-main">
+          <div className="r-id-name">
+            {booking.fullName} <span className="muted">· {booking.empCode} · {booking.bu}</span>
           </div>
-          <div className="big">
-            <div className="n">{countdown}</div>
-            <div className="u">ngày</div>
+          <div className="r-id-sub">
+            {email}
+            {booking.createdAt && (
+              <>&nbsp;&nbsp;·&nbsp;&nbsp;Đăng ký {new Date(booking.createdAt).toLocaleString('vi-VN')}</>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
-      <div className="card">
-        <div className="card-hd">
-          <div className="sec-title" style={{ marginBottom: 'var(--s-1)' }}>
-            <span className="dot"><svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><circle cx="5" cy="3.2" r="2"/><path d="M1 9c0-2.2 1.8-3.8 4-3.8s4 1.6 4 3.8"/></svg></span>Học viên
-          </div>
-          <div className="text-sm">
-            <b>{booking.fullName}</b> · {booking.empCode} · {booking.bu}
-          </div>
-          <div className="booking-meta-grid">
-            <div>
-              <span>Email</span>
-              <b>{email}</b>
-            </div>
-            <div>
-              <span>Thời điểm đăng ký</span>
-              <b>{booking.createdAt ? new Date(booking.createdAt).toLocaleString('vi-VN') : 'Chưa có dữ liệu'}</b>
-            </div>
-            <div>
-              <span>Lượt đổi còn lại</span>
-              <b>{changesLeft}/{maxChanges}</b>
-            </div>
-          </div>
+      <div className="r-sessions">
+        <div className="r-sess-head">
+          <span className="t">Ca thi đã đăng ký</span>
+          <span className="c">· {ordered.length} ca</span>
         </div>
-        <div className="card-bd">
-          <div className="sec-title">
-            <span className="dot accent"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><rect x="1" y="1.5" width="8" height="7.5" rx="1.2"/><line x1="3" y1="0.5" x2="3" y2="2.5"/><line x1="7" y1="0.5" x2="7" y2="2.5"/><line x1="1" y1="4" x2="9" y2="4"/></svg></span>2 ca thi
-          </div>
-          <div className="col" style={{ gap: 'var(--s-3)' }}>
-            {ordered.map((slot, i) => (
-              <SlotCard key={slot.slotId} slot={slot} index={i + 1} />
-            ))}
-            {!sp && booking.speakingSlotId && (
-              <div className="bk-slot">
-                <div className="num" style={{ background: 'var(--danger-50)', color: 'var(--danger-600)' }}>!</div>
-                <div className="body">
-                  <div className="type-lbl" style={{ color: 'var(--danger-600)' }}>Speaking</div>
-                  <div className="when" style={{ color: 'var(--danger-600)', fontSize: 'var(--fs-sm)' }}>
-                    {booking.speakingSlotId} — slot đã bị xóa, liên hệ BTC
-                  </div>
-                </div>
-              </div>
-            )}
-            {!sk && booking.skillsSlotId && (
-              <div className="bk-slot">
-                <div className="num" style={{ background: 'var(--danger-50)', color: 'var(--danger-600)' }}>!</div>
-                <div className="body">
-                  <div className="type-lbl" style={{ color: 'var(--danger-600)' }}>3 Skills</div>
-                  <div className="when" style={{ color: 'var(--danger-600)', fontSize: 'var(--fs-sm)' }}>
-                    {booking.skillsSlotId} — slot đã bị xóa, liên hệ BTC
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+        <div className="r-list">
+          {ordered.map((slot) => (
+            <SessionRow
+              key={slot.slotId}
+              slot={slot}
+              isNext={slot.slotId === first?.slotId}
+              countdown={countdown}
+            />
+          ))}
+          {!sp && booking.speakingSlotId && <DeletedSlotRow label="Speaking" slotId={booking.speakingSlotId} />}
+          {!sk && booking.skillsSlotId && <DeletedSlotRow label="3 Skills" slotId={booking.skillsSlotId} />}
         </div>
-        <div className="card-ft">
+      </div>
+
+      <div className="r-actions">
+        <span className="r-note">
+          {canManage
+            ? changesLeft > 0
+              ? <>Còn <b>{changesLeft}/{maxChanges}</b> lần đổi ca trước hạn</>
+              : 'Bạn đã hết lượt đổi ca'
+            : deadlinePassed
+              ? 'Đã đóng đăng ký'
+              : ''}
+        </span>
+        <div className="r-act-btns">
           {sp && sk && (
             <button
-              className="btn sm"
+              className="btn subtle"
               onClick={handleAddToGoogleCalendar}
               disabled={calendarBusy}
             >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
               {calendarBusy ? 'Đang thêm...' : 'Thêm vào Google Calendar'}
             </button>
+          )}
+          {canManage && (
+            <>
+              <button
+                className={`btn ${changesLeft <= 0 ? 'disabled' : ''}`}
+                onClick={onEdit}
+                disabled={busy || changesLeft <= 0}
+                title={changesLeft <= 0 ? 'Bạn đã hết lượt đổi ca' : undefined}
+              >
+                ↻ Đổi ca thi
+              </button>
+              <div className="menu-wrap" ref={menuRef}>
+                <button
+                  className="btn ghost icon"
+                  onClick={() => setMenuOpen((o) => !o)}
+                  aria-haspopup="true"
+                  aria-expanded={menuOpen}
+                  aria-label="Tùy chọn"
+                  disabled={busy}
+                >
+                  ⋮
+                </button>
+                {menuOpen && (
+                  <div className="menu" role="menu">
+                    <button
+                      className="menu-item danger"
+                      role="menuitem"
+                      onClick={handleCancel}
+                      disabled={busy}
+                    >
+                      🗑 Hủy đăng ký
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -210,42 +213,6 @@ export function BookingDisplay({
         <div className={`banner ${calendarStatus.kind} mt-4`} role="status" aria-live="polite">
           <span className="banner-icon">{calendarStatus.kind === 'success' ? '✓' : '!'}</span>
           <div>{calendarStatus.text}</div>
-        </div>
-      )}
-
-      {!deadlinePassed && allowEnrollment && (
-        <div className="bk-actions">
-          <button
-            className={`btn ${changesLeft <= 0 ? 'disabled' : ''}`}
-            onClick={onEdit}
-            disabled={busy || changesLeft <= 0}
-            title={changesLeft <= 0 ? 'Bạn đã hết lượt đổi ca' : undefined}
-          >
-            ↻ Đổi ca thi
-          </button>
-          <div className="menu-wrap" ref={menuRef}>
-            <button
-              className="btn ghost"
-              onClick={() => setMenuOpen((o) => !o)}
-              aria-haspopup="true"
-              aria-expanded={menuOpen}
-              disabled={busy}
-            >
-              ⋮ Tùy chọn
-            </button>
-            {menuOpen && (
-              <div className="menu" role="menu">
-                <button
-                  className="menu-item danger"
-                  role="menuitem"
-                  onClick={handleCancel}
-                  disabled={busy}
-                >
-                  🗑 Hủy đăng ký
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       )}
     </>
