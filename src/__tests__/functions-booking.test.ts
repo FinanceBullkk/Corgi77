@@ -321,7 +321,15 @@ describe('Cloud Functions booking handlers', () => {
 
     const result = await fns.bookRegistration({ ...signed(), data: basePayload() });
 
-    expect(result).toEqual({ ok: true, emailSent: false });
+    expect(result).toMatchObject({ ok: true, emailSent: false });
+    // Callable returns fresh state (built server-side) so the client skips a post-write read.
+    expect(result.state?.myBooking).toMatchObject({
+      empCode: '262010',
+      speakingSlotId: 'SP-2206-0900',
+      skillsSlotId: '3S-2206-1100',
+    });
+    expect(result.state?.slots.find((s: { slotId: string }) => s.slotId === 'SP-2206-0900')?.remaining).toBe(7);
+    expect(result.state?.slots.find((s: { slotId: string }) => s.slotId === '3S-2206-1100')?.remaining).toBe(6);
     const savedRegistration = db.store.get('registrations/user@cyberlogitec.com');
     expect(savedRegistration).toMatchObject({
       empCode: '262010',
@@ -339,6 +347,30 @@ describe('Cloud Functions booking handlers', () => {
     });
   });
 
+  it('returns fresh config in state (deadline, maxChanges, buList, assessmentName)', async () => {
+    seedOpenConfig(db, {
+      deadline: ts('2027-01-01T00:00:00.000Z'),
+      maxChanges: 5,
+      assessmentName: '  Custom Assessment  ',
+      buList: ['ALPHA', 'BETA'],
+    });
+    seedSlots(db);
+
+    const result = await fns.bookRegistration({ ...signed(), data: basePayload({ bu: 'ALPHA' }) });
+
+    expect(result.state).toMatchObject({
+      email: 'user@cyberlogitec.com',
+      deadline: '2027-01-01T00:00:00.000Z',
+      deadlinePassed: false,
+      allowEnrollment: true,
+      maxChanges: 5,
+      buList: ['ALPHA', 'BETA'],
+      assessmentName: 'Custom Assessment',
+    });
+    // clientNow is stamped client-side, never by the server.
+    expect(result.state).not.toHaveProperty('clientNow');
+  });
+
   it('keeps booking success when audit logging fails after commit', async () => {
     seedOpenConfig(db);
     seedSlots(db);
@@ -346,7 +378,7 @@ describe('Cloud Functions booking handlers', () => {
 
     const result = await fns.bookRegistration({ ...signed(), data: basePayload() });
 
-    expect(result).toEqual({ ok: true, emailSent: false });
+    expect(result).toMatchObject({ ok: true, emailSent: false });
     expect(db.store.get('registrations/user@cyberlogitec.com')).toMatchObject({
       empCode: '262010',
       speakingSlotId: 'SP-2206-0900',
@@ -446,7 +478,12 @@ describe('Cloud Functions booking handlers', () => {
     });
     db.store.set('empCodeClaims/262010', { email: 'user@cyberlogitec.com' });
 
-    await expect(fns.cancelRegistration(signed())).resolves.toEqual({ ok: true });
+    const result = await fns.cancelRegistration(signed());
+    expect(result).toMatchObject({ ok: true });
+    // Callable returns fresh state: booking removed, seats restored.
+    expect(result.state?.myBooking).toBeNull();
+    expect(result.state?.slots.find((s: { slotId: string }) => s.slotId === 'SP-2206-0900')?.remaining).toBe(9);
+    expect(result.state?.slots.find((s: { slotId: string }) => s.slotId === '3S-2206-1100')?.remaining).toBe(8);
 
     expect(db.store.has('registrations/user@cyberlogitec.com')).toBe(false);
     expect(db.store.has('empCodeClaims/262010')).toBe(false);
@@ -468,7 +505,7 @@ describe('Cloud Functions booking handlers', () => {
     db.store.set('empCodeClaims/262010', { email: 'user@cyberlogitec.com' });
     db.failCollectionAdds.add('auditLogs');
 
-    await expect(fns.cancelRegistration(signed())).resolves.toEqual({ ok: true });
+    await expect(fns.cancelRegistration(signed())).resolves.toMatchObject({ ok: true });
 
     expect(db.store.has('registrations/user@cyberlogitec.com')).toBe(false);
     expect(db.store.get('cancelledQuota/user@cyberlogitec.com')).toMatchObject({ changeCount: 2 });

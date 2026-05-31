@@ -4,7 +4,7 @@
  * UC-DB01 -> UC-DB08  : checkIneligibility()
  * UC-DB08 -> UC-DB10  : initDb()
  * UC-DB11 -> UC-DB13  : bookDb() — validation
- * UC-DB14             : bookDb() — pre-flight blocklist
+ * UC-DB14             : bookDb() — surfaces callable block reason
  * UC-DB15 -> UC-DB23  : bookDb() — transaction scenarios
  * UC-DB24             : bookDb() — error handling
  * UC-DB25 -> UC-DB28  : cancelDb()
@@ -281,10 +281,16 @@ describe('bookDb() — validation', () => {
     expect(result.error).toContain('đầy đủ');
   });
 
-  it('UC-DB14: rejects when blocked by ineligibility', async () => {
-    setupGetDocByPath({
-      'ineligibility/262010': { reason: 'Chưa đủ 12 tháng' },
-    });
+  it('UC-DB14: surfaces ineligibility block returned by the callable', async () => {
+    // Eligibility is enforced server-side (and pre-flighted at Step 1), not by a
+    // redundant client pre-call read. bookDb should surface the callable's reason.
+    setupGetDocByPath({ 'config/main': TEST_CONFIG, 'registrations/user@test.com': false });
+    setupGetDocsByPath({ slots: [] });
+    const callable = vi.fn().mockRejectedValue(
+      Object.assign(new Error('Chưa đủ 12 tháng'), { code: 'functions/failed-precondition' }),
+    );
+    mockHttpsCallable.mockReturnValue(callable);
+
     const result = await bookDb('user@test.com', {
       empCode: '262010', fullName: 'A', bu: 'IT',
       speakingSlotId: 'sp1', skillsSlotId: 'sk1',

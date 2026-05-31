@@ -1,5 +1,6 @@
 const { queueConfirmationEmail } = require('./email-helpers');
 const { minToHHmm } = require('./format-helpers');
+const { buildClientState } = require('./client-state');
 
 function slotFromSnap(snap) {
   const data = snap.data();
@@ -124,13 +125,12 @@ function createBookRegistrationHandler({ db, Timestamp, HttpsError, assertSigned
       if (spAvail <= 0) throw businessError(`Ca Speaking "${sp.display}" đã hết chỗ.`);
       if (skAvail <= 0) throw businessError(`Ca 3 Skills "${sk.display}" đã hết chỗ.`);
 
-      let oldSpSnap = null;
-      let oldSkSnap = null;
-      let oldClaimSnap = null;
       const oldClaimRef = oldEmpCode && oldEmpCode !== empCode ? db.doc(`empCodeClaims/${oldEmpCode}`) : null;
-      if (oldSpId && oldSpId !== sp.slotId) oldSpSnap = await tx.get(db.doc(`slots/${oldSpId}`));
-      if (oldSkId && oldSkId !== sk.slotId) oldSkSnap = await tx.get(db.doc(`slots/${oldSkId}`));
-      if (oldClaimRef) oldClaimSnap = await tx.get(oldClaimRef);
+      const [oldSpSnap, oldSkSnap, oldClaimSnap] = await Promise.all([
+        oldSpId && oldSpId !== sp.slotId ? tx.get(db.doc(`slots/${oldSpId}`)) : Promise.resolve(null),
+        oldSkId && oldSkId !== sk.slotId ? tx.get(db.doc(`slots/${oldSkId}`)) : Promise.resolve(null),
+        oldClaimRef ? tx.get(oldClaimRef) : Promise.resolve(null),
+      ]);
 
       if (oldSpSnap?.exists) tx.update(oldSpSnap.ref, { remaining: (oldSpSnap.data().remaining ?? 0) + 1 });
       if (oldSkSnap?.exists) tx.update(oldSkSnap.ref, { remaining: (oldSkSnap.data().remaining ?? 0) + 1 });
@@ -179,10 +179,15 @@ function createBookRegistrationHandler({ db, Timestamp, HttpsError, assertSigned
       }
     });
 
-    if (auditDetail) await addAudit(email, auditDetail.prevSpeakingSlotId ? 'book.update' : 'book.create', auditDetail);
-    if (mailData) {
-      try {
-        await queueConfirmationEmail(
+    // Audit + email run in parallel (both awaited so the writes complete before
+    // Gen2 throttles CPU after the response). State is rebuilt server-side and
+    // returned so the client skips a post-write initDb() round-trip.
+    const [, , state] = await Promise.all([
+      auditDetail
+        ? addAudit(email, auditDetail.prevSpeakingSlotId ? 'book.update' : 'book.create', auditDetail)
+        : Promise.resolve(),
+      mailData
+        ? queueConfirmationEmail(
           db,
           email,
           mailData.fullName,
@@ -192,12 +197,11 @@ function createBookRegistrationHandler({ db, Timestamp, HttpsError, assertSigned
           mailData.assessmentName,
           mailData.empCode,
           mailData.sequence,
-        );
-      } catch (e) {
-        console.warn('Confirmation email failed:', e);
-      }
-    }
-    return { ok: true, emailSent };
+        ).catch((e) => { console.warn('Confirmation email failed:', e); })
+        : Promise.resolve(),
+      buildClientState(db, email),
+    ]);
+    return { ok: true, emailSent, state };
   }
 }
 

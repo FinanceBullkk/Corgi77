@@ -156,6 +156,12 @@ export async function initDb(email: string): Promise<InitResult> {
   };
 }
 
+// The booking/cancel callables return InitResult minus clientNow (built server-side,
+// co-located with Firestore). Stamp clientNow locally so App.tsx's clock-skew stays ≈0.
+function stampState(state: Omit<InitResult, 'clientNow'> | undefined): InitResult | undefined {
+  return state ? { ...state, clientNow: new Date().toISOString() } : undefined;
+}
+
 export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>): Promise<BookResult> {
   const { empCode, fullName, bu, speakingSlotId, skillsSlotId } = payload;
   const trimmedEmpCode = empCode.trim();
@@ -165,18 +171,12 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
   if (!/^\d{6}$/.test(trimmedEmpCode))
     return { ok: false, error: 'Mã NV phải là 6 chữ số (VD: 262010).' };
 
-  let blockReason: string | null = null;
-  try {
-    blockReason = await checkIneligibility(trimmedEmpCode, email);
-  } catch {
-    // Network/permission error at preflight — non-blocking; callable enforces on write.
-  }
-  if (blockReason) return { ok: false, error: blockReason };
-
+  // Eligibility is pre-flighted at Step 1 (step1-form.tsx) and re-enforced by the
+  // callable, so we skip a redundant pre-call read here and go straight to submit.
   try {
     // Lazy-load the Functions SDK only at submit time (keeps it off first paint).
     const { getFunctions, httpsCallable } = await import('firebase/functions');
-    const callBook = httpsCallable<Omit<BookPayload, 'email'>, { emailSent?: boolean }>(getFunctions(), 'bookRegistration');
+    const callBook = httpsCallable<Omit<BookPayload, 'email'>, { emailSent?: boolean; state?: Omit<InitResult, 'clientNow'> }>(getFunctions(), 'bookRegistration');
     const res = await callBook({
       empCode: trimmedEmpCode,
       fullName: fullName.trim(),
@@ -184,11 +184,14 @@ export async function bookDb(email: string, payload: Omit<BookPayload, 'email'>)
       speakingSlotId,
       skillsSlotId,
     });
-    let state: InitResult | undefined;
-    try {
-      state = await initDb(email);
-    } catch (initErr) {
-      captureError(initErr, { operation: 'bookDb.initDb.postCallable' });
+    // Use the fresh state returned by the callable; fall back to initDb() only if absent.
+    let state = stampState(res.data.state);
+    if (!state) {
+      try {
+        state = await initDb(email);
+      } catch (initErr) {
+        captureError(initErr, { operation: 'bookDb.initDb.fallback' });
+      }
     }
     return { ok: true, emailSent: res.data.emailSent === true, state };
   } catch (e) {
@@ -207,13 +210,16 @@ export async function cancelDb(email: string): Promise<CancelResult> {
   try {
     // Lazy-load the Functions SDK only at cancel time (keeps it off first paint).
     const { getFunctions, httpsCallable } = await import('firebase/functions');
-    const callCancel = httpsCallable<Record<string, never>, Record<string, never>>(getFunctions(), 'cancelRegistration');
-    await callCancel({});
-    let state: InitResult | undefined;
-    try {
-      state = await initDb(email);
-    } catch (initErr) {
-      captureError(initErr, { operation: 'cancelDb.initDb.postCallable' });
+    const callCancel = httpsCallable<Record<string, never>, { state?: Omit<InitResult, 'clientNow'> }>(getFunctions(), 'cancelRegistration');
+    const res = await callCancel({});
+    // Use the fresh state returned by the callable; fall back to initDb() only if absent.
+    let state = stampState(res.data.state);
+    if (!state) {
+      try {
+        state = await initDb(email);
+      } catch (initErr) {
+        captureError(initErr, { operation: 'cancelDb.initDb.fallback' });
+      }
     }
     return { ok: true, state };
   } catch (e) {
