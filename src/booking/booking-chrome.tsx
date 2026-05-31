@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import cltLogo from '../assets/clt-logo.jpg';
 import { emailInitials, emailShortName, type DeadlineInfo } from './booking-utils';
 
 // ─── Topbar ───────────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ export function Topbar({
       <div className="topbar-inner">
         <div className="topbar-left">
           <div className="logo">
-            <span className="logo-mark">CL</span>
+            <img className="logo-img" src={cltLogo} alt="CLT" />
           </div>
           <div style={{ width: 1, height: 24, background: 'var(--ink-150)', flexShrink: 0 }} />
           <div className="topbar-title">

@@ -8,6 +8,7 @@ import { ConfirmProvider, useConfirm, useToast } from './confirm-toast-provider'
 import { captureError, friendlyFirestoreError } from './lib/monitoring';
 import { ErrorBoundary } from './components/error-boundary';
 import { BookingFlow } from './booking/booking-flow';
+import cltLogo from './assets/clt-logo.jpg';
 import {
   ALLOWED_EMAIL_SUFFIX,
   COMPANY_EMAIL_REQUIRED_MESSAGE,
@@ -140,7 +141,7 @@ function AppInner() {
         <header className="topbar">
           <div className="topbar-inner">
             <div className="topbar-left">
-              <div className="logo"><span className="logo-mark">CL</span></div>
+              <div className="logo"><img className="logo-img" src={cltLogo} alt="CLT" /></div>
               <div style={{ width: 1, height: 24, background: 'var(--ink-150)', flexShrink: 0 }} />
               <div className="topbar-title">
                 <span className="t">Assessment Booking</span>
@@ -172,7 +173,7 @@ function AppInner() {
         <header className="topbar">
           <div className="topbar-inner">
             <div className="topbar-left">
-              <div className="logo"><span className="logo-mark">CL</span></div>
+              <div className="logo"><img className="logo-img" src={cltLogo} alt="CLT" /></div>
               <div style={{ width: 1, height: 24, background: 'var(--ink-150)', flexShrink: 0 }} />
               <div className="topbar-title">
                 <span className="t">Assessment Booking</span>

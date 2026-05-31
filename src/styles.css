@@ -134,6 +134,7 @@ button { font-family: inherit; cursor: pointer; }
 .topbar-inner { max-width: 1100px; margin: 0 auto; padding: var(--s-3) var(--s-5); display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); }
 .topbar-left, .topbar-right { display: flex; align-items: center; gap: var(--s-3); }
 .logo { display: inline-flex; align-items: center; gap: var(--s-2); font-weight: 700; color: var(--brand-500); font-size: var(--fs-md); text-decoration: none; }
+.logo-img { width: 74px; height: 35px; object-fit: contain; display: block; }
 .logo-mark { width: 30px; height: 30px; background: var(--brand-500); border-radius: var(--r-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--white); font-weight: 800; font-size: 13px; letter-spacing: -.04em; position: relative; }
 .logo-mark::after { content: ''; position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; background: var(--accent-500); border-radius: 50%; border: 2px solid var(--white); }
 .topbar-title { display: flex; flex-direction: column; line-height: 1.25; }
