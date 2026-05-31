@@ -4,7 +4,7 @@ import { dayHeader, daysUntil } from './booking-utils';
 import { minToHHmm, type Slot, type MyBooking, type InitResult } from '../lib/types';
 import { useConfirm } from '../confirm-toast-provider';
 import { cancelDb } from '../lib/db';
-import { downloadBookingIcs } from '../lib/ics';
+import { addBookingToGoogleCalendar } from '../lib/google-calendar';
 
 // ─── Booking Display ──────────────────────────────────────────────────────
 
@@ -32,6 +32,8 @@ export function BookingDisplay({
   onError: (msg: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [calendarBusy, setCalendarBusy] = useState(false);
+  const [calendarStatus, setCalendarStatus] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const confirm = useConfirm();
@@ -73,6 +75,29 @@ export function BookingDisplay({
       onError((e as Error).message || 'Hủy thất bại.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleAddToGoogleCalendar() {
+    if (!sp || !sk) return;
+    setCalendarBusy(true);
+    setCalendarStatus(null);
+    try {
+      await addBookingToGoogleCalendar({
+        empCode: booking.empCode,
+        sp,
+        sk,
+        sequence: booking.changeCount,
+        assessmentName,
+      });
+      setCalendarStatus({ kind: 'success', text: 'Đã thêm/cập nhật 2 ca thi trong Google Calendar.' });
+    } catch (err) {
+      setCalendarStatus({
+        kind: 'danger',
+        text: (err as Error).message || 'Không thêm được vào Google Calendar. Vui lòng thử lại.',
+      });
+    } finally {
+      setCalendarBusy(false);
     }
   }
 
@@ -164,19 +189,21 @@ export function BookingDisplay({
           {sp && sk && (
             <button
               className="btn sm"
-              onClick={() => downloadBookingIcs({
-                empCode: booking.empCode,
-                sp,
-                sk,
-                sequence: booking.changeCount,
-                assessmentName,
-              })}
+              onClick={handleAddToGoogleCalendar}
+              disabled={calendarBusy}
             >
-              📅 Thêm 2 ca thi vào lịch
+              {calendarBusy ? 'Đang thêm...' : 'Thêm vào Google Calendar'}
             </button>
           )}
         </div>
       </div>
+
+      {calendarStatus && (
+        <div className={`banner ${calendarStatus.kind} mt-4`} role="status" aria-live="polite">
+          <span className="banner-icon">{calendarStatus.kind === 'success' ? '✓' : '!'}</span>
+          <div>{calendarStatus.text}</div>
+        </div>
+      )}
 
       {!deadlinePassed && allowEnrollment && (
         <div className="bk-actions">

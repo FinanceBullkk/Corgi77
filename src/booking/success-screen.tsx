@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { SlotCard } from './slot-card';
 import { dayHeader, daysUntil, type Step1Data, type Selection } from './booking-utils';
 import { minToHHmm, type Slot } from '../lib/types';
-import { downloadBookingIcs } from '../lib/ics';
+import { addBookingToGoogleCalendar } from '../lib/google-calendar';
 
 // ─── Success Screen ───────────────────────────────────────────────────────
 
@@ -26,6 +27,8 @@ export function SuccessScreen({
   assessmentName: string;
   onViewDetail: () => void;
 }) {
+  const [calendarBusy, setCalendarBusy] = useState(false);
+  const [calendarStatus, setCalendarStatus] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null);
   const sp = slots.find((s) => s.slotId === selection.speakingId);
   const sk = slots.find((s) => s.slotId === selection.skillsId);
   const ordered = ([sp, sk].filter(Boolean) as Slot[]).sort((a, b) =>
@@ -34,6 +37,29 @@ export function SuccessScreen({
   const first = ordered[0];
   const countdown = first ? daysUntil(first.date) : 0;
   const changesLeft = Math.max(0, maxChanges - changeCount);
+
+  async function handleAddToGoogleCalendar() {
+    if (!sp || !sk) return;
+    setCalendarBusy(true);
+    setCalendarStatus(null);
+    try {
+      await addBookingToGoogleCalendar({
+        empCode: step1.empCode,
+        sp,
+        sk,
+        sequence: changeCount,
+        assessmentName,
+      });
+      setCalendarStatus({ kind: 'success', text: 'Đã thêm/cập nhật 2 ca thi trong Google Calendar.' });
+    } catch (err) {
+      setCalendarStatus({
+        kind: 'danger',
+        text: (err as Error).message || 'Không thêm được vào Google Calendar. Vui lòng thử lại.',
+      });
+    } finally {
+      setCalendarBusy(false);
+    }
+  }
 
   return (
     <>
@@ -85,15 +111,10 @@ export function SuccessScreen({
             {sp && sk && (
               <button
                 className="btn sm"
-                onClick={() => downloadBookingIcs({
-                  empCode: step1.empCode,
-                  sp,
-                  sk,
-                  sequence: changeCount,
-                  assessmentName,
-                })}
+                onClick={handleAddToGoogleCalendar}
+                disabled={calendarBusy}
               >
-                📅 Thêm 2 ca thi vào lịch
+                {calendarBusy ? 'Đang thêm...' : 'Thêm vào Google Calendar'}
               </button>
             )}
             <button className="btn ghost sm" onClick={onViewDetail}>
@@ -102,6 +123,13 @@ export function SuccessScreen({
           </div>
         </div>
       </div>
+
+      {calendarStatus && (
+        <div className={`banner ${calendarStatus.kind} mt-4`} role="status" aria-live="polite">
+          <span className="banner-icon">{calendarStatus.kind === 'success' ? '✓' : '!'}</span>
+          <div>{calendarStatus.text}</div>
+        </div>
+      )}
 
       <div className="banner info mt-4">
         <span className="banner-icon">📨</span>

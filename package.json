@@ -10,7 +10,7 @@
     "check:functions": "node --check functions/index.js",
     "check:rules": "FIREBASE_CLI_DISABLE_UPDATE_NOTIFIER=true firebase deploy --only firestore:rules --project corgi7-d129d --dry-run",
     "test:rules": "XDG_CONFIG_HOME=.firebase/local-config FIREBASE_CLI_DISABLE_UPDATE_NOTIFIER=true firebase emulators:exec --project demo-corgi7-rules --only firestore \"npm run test:rules:vitest\"",
-    "test:rules:vitest": "vitest run src/__tests__/firestore-rules.emulator.test.ts",
+    "test:rules:vitest": "vitest run --config vitest.emulator.config.ts",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "vitest run",

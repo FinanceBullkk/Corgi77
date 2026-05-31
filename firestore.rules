@@ -6,8 +6,14 @@ service cloud.firestore {
     // ─── Helpers ────────────────────────────────────────────────────────
 
     // Admins are configured in /config/main.adminEmails.
-    function isAdmin() {
+    function isCompanyEmail() {
       return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email.matches('^[^@]+@cyberlogitec\\.com$');
+    }
+
+    function isAdmin() {
+      return isCompanyEmail()
         && exists(/databases/$(database)/documents/config/main)
         && request.auth.token.email in
              get(/databases/$(database)/documents/config/main).data.get('adminEmails', []);
@@ -67,23 +73,23 @@ service cloud.firestore {
     }
 
     // ─── Slots ──────────────────────────────────────────────────────────
-    // Read: any signed-in user
+    // Read: any signed-in company user
     // Create: admin only, with field validation
     // Update: admin only. Booking/cancel slot counters are server-authoritative
     // through Cloud Functions (Admin SDK bypasses rules).
     // Delete: admin only
     match /slots/{slotId} {
-      allow read: if request.auth != null;
+      allow read: if isCompanyEmail();
       allow create: if isAdmin() && validNewSlot();
       allow update: if isAdmin() && validAdminSlotUpdate();
       allow delete: if isAdmin() && validAdminSlotDelete();
     }
 
     // ─── Config ─────────────────────────────────────────────────────────
-    // Read: any signed-in user (for deadline pill, enrollment status)
+    // Read: any signed-in company user (for deadline pill, enrollment status)
     // Write: admin only
     match /config/{docId} {
-      allow read: if request.auth != null;
+      allow read: if isCompanyEmail();
       allow write: if isAdmin();
     }
 
@@ -93,31 +99,31 @@ service cloud.firestore {
     // Admin: full access (bypass deadline so admin can fix things after deadline)
     match /registrations/{email} {
       allow read: if isAdmin()
-        || (request.auth != null && request.auth.token.email == email);
+        || (isCompanyEmail() && request.auth.token.email == email);
 
       allow create, update, delete: if isAdmin();
     }
 
     // ─── EmpCode Claims (one empCode = one active registration) ─────────
     // Key = empCode. Doc shape: { email }
-    // Read: single-doc reads allowed for signed-in users so bookDb can detect
+    // Read: single-doc reads allowed for signed-in company users so bookDb can detect
     // an existing claim in its transaction; list remains admin-only.
     // Write/delete: Cloud Functions own this lock. Admin bypass remains for
     // production data fixes.
     match /empCodeClaims/{empCode} {
-      allow get: if request.auth != null;
+      allow get: if isCompanyEmail();
       allow list: if isAdmin();
       allow create, update, delete: if isAdmin();
     }
 
     // ─── Eligibility (allowlist by empCode) ──────────────────────────────
     // Key = empCode (6 digits). Doc shape: { empCode, fullName, bu?, email? }
-    // Read: `get` (single doc by empCode) allowed for any signed-in user
+    // Read: `get` (single doc by empCode) allowed for any signed-in company user
     //       so they can check their own eligibility. `list` requires admin
     //       to prevent scraping the full allowlist.
     // Write: admin only.
     match /eligibility/{empCode} {
-      allow get: if request.auth != null;
+      allow get: if isCompanyEmail();
       allow list: if isAdmin();
       allow write: if isAdmin();
     }
@@ -125,13 +131,13 @@ service cloud.firestore {
     // ─── Ineligibility (blocklist by empCode with reason) ───────────────
     // Key = empCode (6 digits). Doc shape: { reason, fullName?, email? }
     //
-    // Read: `get` (single doc by empCode) allowed for any signed-in user
+    // Read: `get` (single doc by empCode) allowed for any signed-in company user
     //       so they can pre-flight check their own status after typing
     //       empCode. `list` (enumerate collection) requires admin so users
     //       cannot scrape the full blocklist.
     // Write: admin only.
     match /ineligibility/{empCode} {
-      allow get: if request.auth != null;
+      allow get: if isCompanyEmail();
       allow list: if isAdmin();
       allow write: if isAdmin();
     }

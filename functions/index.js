@@ -26,11 +26,21 @@ function envPositiveInt(name, fallback) {
 }
 
 const USER_RATE_LIMIT_MS = envPositiveInt('FUNCTIONS_USER_RATE_LIMIT_MS', 3000);
+const ALLOWED_EMAIL_SUFFIX = '@cyberlogitec.com';
+
+function isAllowedCompanyEmail(email) {
+  const normalized = String(email || '').trim().toLowerCase();
+  return normalized.endsWith(ALLOWED_EMAIL_SUFFIX)
+    && normalized.slice(0, -ALLOWED_EMAIL_SUFFIX.length).length > 0;
+}
 
 function assertSignedIn(request) {
   const email = request.auth?.token?.email;
   if (!email) throw new HttpsError('unauthenticated', 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
-  return String(email);
+  if (!isAllowedCompanyEmail(email)) {
+    throw new HttpsError('permission-denied', `Chỉ chấp nhận tài khoản Google có email ${ALLOWED_EMAIL_SUFFIX}.`);
+  }
+  return String(email).trim().toLowerCase();
 }
 
 async function assertAdmin(request) {

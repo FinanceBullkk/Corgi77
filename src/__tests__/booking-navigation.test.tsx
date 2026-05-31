@@ -47,7 +47,7 @@ const SK: Slot = {
 };
 
 const BOOKED: InitResult = {
-  email: 'user@test.com',
+  email: 'user@cyberlogitec.com',
   myBooking: {
     empCode: '262010', fullName: 'NGUYEN VAN A', bu: 'BSG',
     speakingSlotId: 'SP1', skillsSlotId: 'SK1',
@@ -68,7 +68,7 @@ const FRESH: InitResult = { ...BOOKED, myBooking: null };
 beforeEach(() => {
   vi.clearAllMocks();
   h.onAuth.mockImplementation((cb: (u: unknown) => void) => {
-    cb({ email: 'user@test.com' });
+    cb({ email: 'user@cyberlogitec.com' });
     return () => {};
   });
   h.isAdmin.mockReturnValue(false);
@@ -80,6 +80,19 @@ beforeEach(() => {
 // Reproduce: "đổi ca" → back to Step 1 should retain Step-1 form fields.
 // ═══════════════════════════════════════════════════════════════════════════
 describe('Booking navigation — step-1 form retention', () => {
+  it('AUTH-1: blocks signed-in Google accounts outside cyberlogitec.com', async () => {
+    h.onAuth.mockImplementation((cb: (u: unknown) => void) => {
+      cb({ email: 'user@gmail.com' });
+      return () => {};
+    });
+
+    render(<App />);
+
+    await screen.findByText('Tài khoản không hợp lệ');
+    expect(screen.getAllByText(/@cyberlogitec\.com/).length).toBeGreaterThan(0);
+    expect(h.initDb).not.toHaveBeenCalled();
+  });
+
   it('NAV-1: editing an existing booking, going back to Step 1 keeps emp/name/BU', async () => {
     h.initDb.mockResolvedValue(BOOKED);
     const user = userEvent.setup();

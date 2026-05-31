@@ -35,7 +35,7 @@ async function seed(path: string, data: Record<string, unknown>) {
   });
 }
 
-async function seedAdminConfig(adminEmails = ['admin@test.com']) {
+async function seedAdminConfig(adminEmails = ['admin@cyberlogitec.com']) {
   await seed('config/main', { adminEmails });
 }
 
@@ -69,29 +69,64 @@ afterAll(async () => {
 
 describe('firestore.rules admin authorization', () => {
   it('does not grant admin access without /config/main.adminEmails', async () => {
-    const db = authedDb('admin@test.com');
+    const db = authedDb('admin@cyberlogitec.com');
     await assertFails(setDoc(doc(db, 'slots/SP-2206-0900'), validSlot));
   });
 
   it('grants admin access from /config/main.adminEmails only', async () => {
     await seedAdminConfig();
 
-    const admin = authedDb('admin@test.com');
-    const user = authedDb('user@test.com');
+    const admin = authedDb('admin@cyberlogitec.com');
+    const user = authedDb('user@cyberlogitec.com');
 
     await assertSucceeds(setDoc(doc(admin, 'slots/SP-2206-0900'), validSlot));
     await assertFails(setDoc(doc(user, 'slots/SP-2206-1000'), { ...validSlot, startMin: 600, endMin: 660 }));
+  });
+
+  it('does not grant admin access to non-company email even if configured', async () => {
+    await seedAdminConfig(['admin@gmail.com']);
+
+    const admin = authedDb('admin@gmail.com');
+    await assertFails(setDoc(doc(admin, 'slots/SP-2206-0900'), validSlot));
+  });
+});
+
+describe('firestore.rules company email gate', () => {
+  it('allows company users to read booking data but blocks other signed-in Google accounts', async () => {
+    await seedAdminConfig();
+    await seed('slots/SP-2206-0900', validSlot);
+    await seed('registrations/user@cyberlogitec.com', { empCode: '262010' });
+    await seed('empCodeClaims/262010', { email: 'user@cyberlogitec.com' });
+    await seed('eligibility/262010', { empCode: '262010' });
+    await seed('ineligibility/262011', { reason: 'blocked' });
+
+    const companyUser = authedDb('user@cyberlogitec.com');
+    const outsider = authedDb('user@gmail.com');
+
+    await assertSucceeds(getDoc(doc(companyUser, 'config/main')));
+    await assertSucceeds(getDoc(doc(companyUser, 'slots/SP-2206-0900')));
+    await assertSucceeds(getDoc(doc(companyUser, 'registrations/user@cyberlogitec.com')));
+    await assertSucceeds(getDoc(doc(companyUser, 'empCodeClaims/262010')));
+    await assertSucceeds(getDoc(doc(companyUser, 'eligibility/262010')));
+    await assertSucceeds(getDoc(doc(companyUser, 'ineligibility/262011')));
+
+    await assertFails(getDoc(doc(outsider, 'config/main')));
+    await assertFails(getDoc(doc(outsider, 'slots/SP-2206-0900')));
+    await assertFails(getDoc(doc(outsider, 'registrations/user@gmail.com')));
+    await assertFails(getDoc(doc(outsider, 'empCodeClaims/262010')));
+    await assertFails(getDoc(doc(outsider, 'eligibility/262010')));
+    await assertFails(getDoc(doc(outsider, 'ineligibility/262011')));
   });
 });
 
 describe('firestore.rules auditLogs', () => {
   it('allows admin client to append own admin audit events', async () => {
     await seedAdminConfig();
-    const admin = authedDb('admin@test.com');
+    const admin = authedDb('admin@cyberlogitec.com');
 
     await assertSucceeds(addDoc(collection(admin, 'auditLogs'), {
       timestamp: serverTimestamp(),
-      email: 'admin@test.com',
+      email: 'admin@cyberlogitec.com',
       event: 'admin.updateConfig',
       detail: { field: 'allowEnrollment' },
     }));
@@ -99,11 +134,11 @@ describe('firestore.rules auditLogs', () => {
 
   it('blocks forged user booking audit logs from raw SDK', async () => {
     await seedAdminConfig();
-    const user = authedDb('user@test.com');
+    const user = authedDb('user@cyberlogitec.com');
 
     await assertFails(addDoc(collection(user, 'auditLogs'), {
       timestamp: serverTimestamp(),
-      email: 'user@test.com',
+      email: 'user@cyberlogitec.com',
       event: 'book.create',
       detail: { empCode: '262010' },
     }));
@@ -111,11 +146,11 @@ describe('firestore.rules auditLogs', () => {
 
   it('blocks admin audit logs when email does not match auth token', async () => {
     await seedAdminConfig();
-    const admin = authedDb('admin@test.com');
+    const admin = authedDb('admin@cyberlogitec.com');
 
     await assertFails(addDoc(collection(admin, 'auditLogs'), {
       timestamp: serverTimestamp(),
-      email: 'other@test.com',
+      email: 'other@cyberlogitec.com',
       event: 'admin.updateConfig',
       detail: {},
     }));
@@ -128,7 +163,7 @@ describe('firestore.rules auditLogs', () => {
     await assertFails(getDoc(doc(db, 'auditLogs/log-1')));
     await assertFails(addDoc(collection(db, 'auditLogs'), {
       timestamp: serverTimestamp(),
-      email: 'admin@test.com',
+      email: 'admin@cyberlogitec.com',
       event: 'admin.updateConfig',
       detail: {},
     }));
@@ -140,7 +175,7 @@ describe('firestore.rules slot delete safety', () => {
     await seedAdminConfig();
     await seed('slots/SP-2206-0900', validSlot);
 
-    const admin = authedDb('admin@test.com');
+    const admin = authedDb('admin@cyberlogitec.com');
     await assertSucceeds(deleteDoc(doc(admin, 'slots/SP-2206-0900')));
   });
 
@@ -148,7 +183,7 @@ describe('firestore.rules slot delete safety', () => {
     await seedAdminConfig();
     await seed('slots/SP-2206-0900', { ...validSlot, remaining: 7 });
 
-    const admin = authedDb('admin@test.com');
+    const admin = authedDb('admin@cyberlogitec.com');
     await assertFails(deleteDoc(doc(admin, 'slots/SP-2206-0900')));
   });
 
@@ -156,7 +191,7 @@ describe('firestore.rules slot delete safety', () => {
     await seedAdminConfig();
     await seed('slots/SP-2206-0900', validSlot);
 
-    const user = authedDb('user@test.com');
+    const user = authedDb('user@cyberlogitec.com');
     await assertFails(deleteDoc(doc(user, 'slots/SP-2206-0900')));
   });
 });

@@ -8,6 +8,12 @@ import { ConfirmProvider, useConfirm, useToast } from './confirm-toast-provider'
 import { captureError, friendlyFirestoreError } from './lib/monitoring';
 import { ErrorBoundary } from './components/error-boundary';
 import { BookingFlow } from './booking/booking-flow';
+import {
+  ALLOWED_EMAIL_SUFFIX,
+  COMPANY_EMAIL_REQUIRED_MESSAGE,
+  isAllowedCompanyEmail,
+  normalizeCompanyEmail,
+} from './lib/auth-domain';
 
 // Lazy-loaded so the admin bundle is code-split out of the booking critical path.
 const AdminPanel = lazy(() => import('./AdminPanel').then((m) => ({ default: m.AdminPanel })));
@@ -51,6 +57,8 @@ function AppInner() {
   useEffect(() => {
     const unsub = onAuth((u) => {
       setAuthUser(u);
+      setData(null);
+      setLoadErr(null);
       setAuthLoading(false);
     });
     return unsub;
@@ -59,7 +67,8 @@ function AppInner() {
   // Load data after auth is resolved and user is signed in
   useEffect(() => {
     if (!authUser?.email) return;
-    initDb(authUser.email)
+    if (!isAllowedCompanyEmail(authUser.email)) return;
+    initDb(normalizeCompanyEmail(authUser.email))
       .then((d) => {
         skewRef.current = new Date(d.clientNow).getTime() - Date.now();
         setData(d);
@@ -84,6 +93,11 @@ function AppInner() {
         pushToast('error', 'Không lấy được email đăng nhập Google.');
         return;
       }
+      if (!isAllowedCompanyEmail(email)) {
+        pushToast('error', COMPANY_EMAIL_REQUIRED_MESSAGE);
+        return;
+      }
+      email = normalizeCompanyEmail(email);
       await fetchAdminEmails().catch(() => {});
       if (!isAdmin(email)) {
         pushToast('error', `Tài khoản ${email} không có quyền admin.`);
@@ -120,6 +134,37 @@ function AppInner() {
     );
   }
 
+  if (authUser && !isAllowedCompanyEmail(authUser.email)) {
+    return (
+      <div className="app">
+        <header className="topbar">
+          <div className="topbar-inner">
+            <div className="topbar-left">
+              <div className="logo"><span className="logo-mark">CL</span></div>
+              <div style={{ width: 1, height: 24, background: 'var(--ink-150)', flexShrink: 0 }} />
+              <div className="topbar-title">
+                <span className="t">Assessment Booking</span>
+                <span className="s">Q2 2026 · English Proficiency Test</span>
+              </div>
+            </div>
+          </div>
+        </header>
+        <main className="container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
+          <h2 style={{ marginBottom: '1rem' }}>Tài khoản không hợp lệ</h2>
+          <p className="text-sm text-muted" style={{ marginBottom: '0.75rem' }}>
+            {COMPANY_EMAIL_REQUIRED_MESSAGE}
+          </p>
+          <p className="text-sm text-muted" style={{ marginBottom: '2rem' }}>
+            Email hiện tại: <strong>{authUser.email || '(không có email)'}</strong>
+          </p>
+          <button className="btn" onClick={() => signOutUser().catch(() => {})}>
+            Đăng nhập bằng email {ALLOWED_EMAIL_SUFFIX}
+          </button>
+        </main>
+      </div>
+    );
+  }
+
   // Not signed in → show sign-in screen
   if (!authUser) {
     return (
@@ -139,7 +184,7 @@ function AppInner() {
         <main className="container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
           <h2 style={{ marginBottom: '1rem' }}>Đăng nhập để tiếp tục</h2>
           <p className="text-sm text-muted" style={{ marginBottom: '2rem' }}>
-            Bạn cần đăng nhập bằng tài khoản Google để sử dụng hệ thống đặt lịch Assessment.
+            Bạn cần đăng nhập bằng tài khoản Google {ALLOWED_EMAIL_SUFFIX} để sử dụng hệ thống đặt lịch Assessment.
           </p>
           <button className="btn" onClick={() => signInWithGoogle().catch((e) => {
             if (!/popup-closed|cancelled-popup|popup-blocked/i.test(e.message || '')) {
